@@ -1,0 +1,304 @@
+{
+  "realm": "fdrop",
+  "enabled": true,
+  "displayName": "fdrop",
+  "sslRequired": "external",
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 86400,
+  "ssoSessionMaxLifespan": 604800,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+  "browserFlow": "fdrop browser",
+  "attributes": {
+    "acr.loa.map": "{\"2fa\":\"2\"}"
+  },
+  "roles": {
+    "realm": [
+      {
+        "name": "fdrop-user",
+        "description": "Standard fdrop user: files and folders"
+      },
+      {
+        "name": "fdrop-admin",
+        "description": "fdrop admin: users and forward destinations"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "fdrop-web",
+      "name": "fdrop web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "secret": "fdrop-web-dev-secret",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://localhost:8080/auth/callback",
+        "http://localhost:5173/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:8080",
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/##http://localhost:5173/",
+        "backchannel.logout.url": "http://localhost:8080/auth/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "acr.loa.map": "{\"2fa\":\"2\"}"
+      }
+    },
+    {
+      "clientId": "fdrop-sftp",
+      "name": "fdrop SFTP and admin API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "secret": "fdrop-sftp-dev-secret",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true
+    },
+    {
+      "clientId": "fdrop-api",
+      "name": "fdrop API audience",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@fdrop.local",
+      "emailVerified": true,
+      "firstName": "fdrop",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "fdrop-user",
+        "fdrop-admin"
+      ]
+    },
+    {
+      "username": "jugash",
+      "enabled": true,
+      "email": "jugash@fdrop.local",
+      "emailVerified": true,
+      "firstName": "Jugash",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "jugash",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "fdrop-user"
+      ]
+    },
+    {
+      "username": "chris",
+      "enabled": true,
+      "email": "chris@fdrop.local",
+      "emailVerified": true,
+      "firstName": "Chris",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "chris",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "fdrop-user"
+      ]
+    },
+    {
+      "username": "service-account-fdrop-sftp",
+      "enabled": true,
+      "serviceAccountClientId": "fdrop-sftp",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "manage-users"
+        ]
+      }
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "fdrop browser",
+      "description": "Browser sign-in with levels of authentication: 1 = password, 2 = password and a second factor",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "flowAlias": "fdrop browser forms",
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "fdrop browser forms",
+      "description": "Each level runs when the client asks for it (acr_values)",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "flowAlias": "fdrop level 1",
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "flowAlias": "fdrop level 2",
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "fdrop level 1",
+      "description": "Password",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "fdrop loa 1",
+          "requirement": "REQUIRED",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "auth-username-password-form",
+          "requirement": "REQUIRED",
+          "priority": 20
+        }
+      ]
+    },
+    {
+      "alias": "fdrop level 2",
+      "description": "Second factor: authenticator app, security key or recovery code",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "fdrop loa 2",
+          "requirement": "REQUIRED",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "flowAlias": "fdrop second factor",
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "fdrop second factor",
+      "description": "Any one of the user's factors",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "auth-otp-form",
+          "requirement": "ALTERNATIVE",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "webauthn-authenticator",
+          "requirement": "ALTERNATIVE",
+          "priority": 20
+        },
+        {
+          "authenticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "auth-recovery-authn-code-form",
+          "requirement": "ALTERNATIVE",
+          "priority": 30
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "fdrop loa 1",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "36000"
+      }
+    },
+    {
+      "alias": "fdrop loa 2",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "36000"
+      }
+    }
+  ]
+}

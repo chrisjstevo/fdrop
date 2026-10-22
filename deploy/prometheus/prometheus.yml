@@ -1,0 +1,27 @@
+# Example Prometheus configuration for fdrop (excerpt to merge into yours).
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: fdrop
+    scrape_interval: 15s
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/fdrop-metrics-token
+    static_configs:
+      - targets: ["fdrop.internal:8081"]
+
+  # /readyz through the blackbox exporter, for the FdropNotReady alert
+  - job_name: fdrop-ready
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://fdrop.internal:8081/readyz"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

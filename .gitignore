@@ -1,0 +1,11 @@
+target/
+data/
+node_modules/
+*.iml
+.idea/
+.vscode/
+.DS_Store
+# dev container: the developer's local copy of fdrop's forward key for sftp-target
+.devcontainer/sftp-target/authorized_keys
+# never commit real configuration
+fdrop.yaml

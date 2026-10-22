@@ -1,0 +1,67 @@
+/*
+ * fdrop design tokens. Values follow lme.com's live styles (read 2026-10-22): Nunito Sans, LME navy text, deep navy
+ * bars and buttons, coral accents, pill buttons. Components use these properties only, never raw colours.
+ * Coral is never used for text or behind white text: both measure about 3.8:1, under WCAG AA's 4.5:1.
+ */
+:root {
+  --color-ink: #13426b;
+  --color-navy-deep: #171739;
+  --color-coral: #f4364c;
+  --color-mint: #b5e3d8;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f9f9f9;
+  --color-border: #c0cdd8;
+  --color-divider: rgba(19, 66, 107, 0.2);
+  --color-muted: #696969;
+  --color-link: #3860be;
+  --color-on-deep: #ffffff;
+  --color-panel: #ffffff;
+  --mark-tint: var(--color-ink);
+  --mark-opacity: 0.08;
+
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-body: 16px;
+  --text-small: 14px;
+  --text-title: 40px;
+  --text-label: 12px;
+  --line-body: 24px;
+
+  --radius-pill: 24px;
+  --radius: 4px;
+  --shadow-raised: 0 20px 28px rgba(19, 66, 107, 0.2);
+  --focus-ring: 2px solid var(--color-coral);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --topbar-height: 56px;
+  --sidebar-width: 232px;
+  --tap: 44px;
+}
+
+/* Dark theme: lme.com has none, so it is derived from the same palette. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-ink: #ffffff;
+    --color-surface: #171739;
+    --color-surface-alt: #13426b;
+    --color-panel: #1c2050;
+    --color-border: rgba(255, 255, 255, 0.3);
+    --color-divider: rgba(255, 255, 255, 0.2);
+    --color-muted: #c0cdd8;
+    --color-link: #b5e3d8;
+    --mark-tint: #ffffff;
+    --shadow-raised: 0 20px 28px rgba(0, 0, 0, 0.4);
+  }
+}
+
+@media (max-width: 639px) {
+  :root {
+    --text-title: 32px;
+  }
+}

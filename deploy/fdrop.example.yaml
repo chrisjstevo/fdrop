@@ -1,0 +1,66 @@
+# Example production configuration. Every key can be overridden by an FDROP_SECTION_KEY environment variable,
+# e.g. FDROP_STORAGE_S3_BUCKET; secrets should come from the environment or secret files, never this file.
+http:
+  port: 8443
+  publicUrl: https://fdrop.example.com
+  tls: { enabled: true, cert: /etc/fdrop/tls.crt, key: /etc/fdrop/tls.key }
+  simpleUploadMax: 64MiB
+  trustedProxies: []    # CIDRs of reverse proxies / load balancers whose Forwarded, X-Forwarded-For and PROXY headers are believed
+management:
+  port: 8081
+  bind: 0.0.0.0
+  metricsToken: ${FDROP_MANAGEMENT_METRICSTOKEN:-}   # empty = /metrics needs no token
+  histogramBuckets: [0.005, 0.025, 0.1, 0.5, 1, 5, 30, 120, 600]
+sftp:
+  enabled: true
+  port: 2222
+  hostKeyPath: /var/lib/fdrop/ssh_host_ed25519_key
+  spoolDir: /var/lib/fdrop/spool
+  proxyProtocol: false  # accept HAProxy PROXY v1/v2 from http.trustedProxies, to record real client IPs behind a TCP load balancer
+auth:
+  oidc:
+    issuer: https://sso.example.com/realms/fdrop
+    webClientId: fdrop-web
+    webClientSecret: ${FDROP_AUTH_OIDC_WEBCLIENTSECRET}
+    redirectUri: https://fdrop.example.com/auth/callback
+    sftpClientId: fdrop-sftp
+    sftpClientSecret: ${FDROP_AUTH_OIDC_SFTPCLIENTSECRET}
+    apiAudience: fdrop-api
+    userRole: fdrop-user
+    adminRole: fdrop-admin
+  userManagement:
+    enabled: true        # false = admins see users read-only
+  twoFactor:
+    require: admins      # none | admins | all: who must sign in with a second factor
+    acr: 2fa             # the ACR value the fdrop-web client maps to level of authentication 2
+    sftpPasswordWithCode: true   # false = users who need two factors use SSH keys only over SFTP
+  session: { idle: 24h, absolute: 7d }
+forward:
+  allowedHosts: []       # e.g. ["sftp.partner.example", "10.20.0.0/16"]; empty disables forward folders
+  encryptionKey: ${FDROP_FORWARD_ENCRYPTIONKEY}   # 32-byte base64
+  workers: 4
+  perDestinationConcurrency: 2
+  retryFor: 24h
+  connectTimeout: 30s
+storage:
+  type: s3            # local | s3
+  local: { root: /var/lib/fdrop/data }
+  s3:
+    bucket: my-fdrop
+    prefix: prod/
+    region: eu-west-1
+    endpointOverride: null   # e.g. http://minio:9000
+    pathStyle: false
+    sse: AES256
+upload:
+  chunkSize: 8MiB
+  ttl: 24h
+  maxParallelChunks: 3
+  historyRetention: 365d   # My uploads rows
+db:
+  url: jdbc:postgresql://db.example.com/fdrop
+  username: fdrop
+  password: ${FDROP_DB_PASSWORD}
+limits:
+  maxFileSize: 100GiB
+  defaultQuota: 50GiB

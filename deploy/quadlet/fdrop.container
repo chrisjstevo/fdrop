@@ -1,0 +1,39 @@
+# Runs fdrop under systemd with Podman Quadlet.
+# Copy to ~/.config/containers/systemd/ (rootless) or /etc/containers/systemd/ (rootful),
+# put fdrop.yaml in /etc/fdrop/, the secrets in Podman secrets, then:
+#   systemctl --user daemon-reload && systemctl --user start fdrop
+#
+#   podman secret create fdrop-web-secret -     <<< "<fdrop-web client secret>"
+#   podman secret create fdrop-sftp-secret -    <<< "<fdrop-sftp client secret>"
+#   podman secret create fdrop-forward-key -    <<< "$(openssl rand -base64 32)"
+#   podman secret create fdrop-metrics-token -  <<< "$(openssl rand -hex 32)"
+
+[Unit]
+Description=fdrop file drop (HTTP and SFTP)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=registry.example.com/fdrop:0.1.0-SNAPSHOT
+ContainerName=fdrop
+AutoUpdate=registry
+Volume=/etc/fdrop:/etc/fdrop:ro,Z
+Volume=fdrop-data:/var/lib/fdrop:Z
+Environment=FDROP_CONFIG=/etc/fdrop/fdrop.yaml
+Environment=FDROP_AUDIT_FILE=/var/lib/fdrop/audit.log
+Secret=fdrop-web-secret,type=env,target=FDROP_AUTH_OIDC_WEBCLIENTSECRET
+Secret=fdrop-sftp-secret,type=env,target=FDROP_AUTH_OIDC_SFTPCLIENTSECRET
+Secret=fdrop-forward-key,type=env,target=FDROP_FORWARD_ENCRYPTIONKEY
+Secret=fdrop-metrics-token,type=env,target=FDROP_MANAGEMENT_METRICSTOKEN
+PublishPort=8443:8443
+PublishPort=2222:2222
+# The management port is for Prometheus only; never publish it to the internet.
+PublishPort=127.0.0.1:8081:8081
+HealthCmd=none
+
+[Service]
+Restart=on-failure
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

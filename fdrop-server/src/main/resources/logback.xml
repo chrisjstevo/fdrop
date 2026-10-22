@@ -1,0 +1,44 @@
+<configuration>
+  <!--
+    Application logs: JSON lines on stdout (set FDROP_LOG_FORMAT=PLAIN for human-readable lines in development).
+    Audit log: JSON lines in their own file, $FDROP_AUDIT_FILE (default ./data/audit.log), rolled daily.
+  -->
+  <property name="AUDIT_FILE" value="${FDROP_AUDIT_FILE:-./data/audit.log}"/>
+  <property name="LOG_FORMAT" value="${FDROP_LOG_FORMAT:-JSON}"/>
+
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <includeMdc>true</includeMdc>
+    </encoder>
+  </appender>
+
+  <appender name="PLAIN" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{24} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${AUDIT_FILE}</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>${AUDIT_FILE}.%d{yyyy-MM-dd}</fileNamePattern>
+      <maxHistory>90</maxHistory>
+    </rollingPolicy>
+    <encoder>
+      <pattern>%msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="fdrop.audit" level="INFO" additivity="false">
+    <appender-ref ref="AUDIT"/>
+  </logger>
+  <logger name="org.apache.sshd" level="WARN"/>
+  <logger name="io.netty" level="WARN"/>
+  <logger name="com.zaxxer.hikari" level="WARN"/>
+  <logger name="org.flywaydb" level="WARN"/>
+  <logger name="software.amazon" level="WARN"/>
+
+  <root level="INFO">
+    <appender-ref ref="${LOG_FORMAT}"/>
+  </root>
+</configuration>

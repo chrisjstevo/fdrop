@@ -1,0 +1,29 @@
+# Local demo only: fdrop (local storage) with Keycloak and the dev realm. Not for production.
+#   ./mvnw -pl fdrop-server -am package jib:buildTar && podman load -i fdrop-server/target/jib-image.tar
+#   podman-compose -f deploy/compose/compose.yaml up
+# Then open http://localhost:8080 and sign in as admin / admin.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8180
+    ports: ["8180:8180", "8080:8080", "2222:2222", "127.0.0.1:8081:8081"]   # fdrop shares this network
+    volumes:
+      - ../../.devcontainer/keycloak/fdrop-realm.json:/opt/keycloak/data/import/fdrop-realm.json:ro,z
+  fdrop:
+    image: localhost/fdrop:0.1.0-SNAPSHOT
+    network_mode: service:keycloak   # same localhost, so the issuer URL matches for browser and server
+    environment:
+      FDROP_CONFIG: /etc/fdrop/fdrop.yaml
+      FDROP_AUTH_OIDC_WEBCLIENTSECRET: fdrop-web-dev-secret
+      FDROP_AUTH_OIDC_SFTPCLIENTSECRET: fdrop-sftp-dev-secret
+      FDROP_AUDIT_FILE: /var/lib/fdrop/audit.log
+    volumes:
+      - ../../.devcontainer/fdrop.dev.yaml:/etc/fdrop/fdrop.yaml:ro,z
+      - fdrop-data:/var/lib/fdrop
+    depends_on: [keycloak]
+volumes:
+  fdrop-data:

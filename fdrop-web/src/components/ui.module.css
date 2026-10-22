@@ -1,0 +1,332 @@
+.logo {
+  display: block;
+  flex: none;
+}
+
+/* Buttons: pill shape, 14px semibold, as on lme.com. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: 12px 32px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  font-size: var(--text-small);
+  font-weight: 600;
+  line-height: 20px;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.primary {
+  background: var(--color-navy-deep);
+  border-color: var(--color-navy-deep);
+  color: #fff;
+}
+
+.secondary {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-ink);
+}
+
+/* Destructive: navy text with a coral outline; coral never carries text. */
+.danger {
+  background: var(--color-surface);
+  border: 2px solid var(--color-coral);
+  color: var(--color-ink);
+}
+
+.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-ink);
+  padding: 8px 12px;
+}
+
+.onDark {
+  background: transparent;
+  border-color: #fff;
+  color: #fff;
+}
+
+.small {
+  padding: 6px 16px;
+  min-height: 36px;
+}
+
+@media (max-width: 639px) {
+  .button {
+    padding: 10px 20px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .primary {
+    background: #fff;
+    border-color: #fff;
+    color: #171739;
+  }
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 0 10px;
+  font-size: var(--text-label);
+  font-weight: 700;
+  line-height: 22px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.badge_folder {
+  border: 1px solid var(--color-ink);
+  color: var(--color-ink);
+}
+
+.badge_forward {
+  background: var(--color-navy-deep);
+  color: #fff;
+}
+
+.badge_ok {
+  background: var(--color-mint);
+  color: #13426b;
+}
+
+.badge_neutral {
+  background: var(--color-surface-alt);
+  color: var(--color-ink);
+  border: 1px solid var(--color-border);
+}
+
+.badge_warn {
+  border: 1px solid var(--color-coral);
+  color: var(--color-ink);
+}
+
+.badge_fail {
+  border: 2px solid var(--color-coral);
+  color: var(--color-ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  .badge_forward {
+    background: #fff;
+    color: #171739;
+  }
+}
+
+.progress {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-ink);
+  transition: width 0.25s ease-out;
+}
+
+.error {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  border-left: 4px solid var(--color-coral);
+  background: var(--color-surface-alt);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  border-radius: var(--radius);
+}
+
+.errorIcon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-coral);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.notice {
+  border-left: 4px solid var(--color-mint);
+  background: var(--color-surface-alt);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  border-radius: var(--radius);
+}
+
+.empty {
+  text-align: center;
+  padding: var(--space-7) var(--space-4);
+}
+
+.emptyTitle {
+  font-weight: 600;
+  margin: 0 0 var(--space-2);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 23, 57, 0.45);
+  z-index: 40;
+}
+
+.dialog {
+  position: fixed;
+  z-index: 41;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--color-panel);
+  color: var(--color-ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+  padding: var(--space-5);
+}
+
+/* Tablets: dialogs as side panels. */
+@media (min-width: 640px) and (max-width: 1024px) {
+  .dialog {
+    top: 0;
+    left: auto;
+    right: 0;
+    transform: none;
+    height: 100vh;
+    max-height: none;
+    width: min(480px, 100vw);
+    border-radius: 0;
+  }
+}
+
+.dialogTitle {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 40px var(--space-2) 0;
+}
+
+.dialogBody {
+  margin-top: var(--space-4);
+}
+
+.dialogClose {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: var(--tap);
+  height: var(--tap);
+  border: none;
+  background: transparent;
+  font-size: 28px;
+  cursor: pointer;
+  color: var(--color-ink);
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+}
+
+.menuTrigger {
+  width: var(--tap);
+  height: var(--tap);
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 20px;
+  color: var(--color-ink);
+}
+
+.menuTrigger:hover {
+  background: var(--color-surface-alt);
+}
+
+.menu {
+  min-width: 180px;
+  background: var(--color-panel);
+  color: var(--color-ink);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+  padding: var(--space-1);
+  z-index: 50;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: var(--text-small);
+  outline: none;
+}
+
+.menuItem[data-highlighted] {
+  background: var(--color-surface-alt);
+}
+
+.menuItem[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menuDanger {
+  box-shadow: inset 3px 0 0 var(--color-coral);
+}
+
+.field {
+  margin-bottom: var(--space-4);
+}
+
+.hint {
+  font-size: var(--text-small);
+  color: var(--color-muted);
+  margin: var(--space-1) 0 0;
+}
+
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  font-size: var(--text-small);
+}
+
+.crumbs li + li::before {
+  content: "/";
+  margin-right: var(--space-1);
+  color: var(--color-muted);
+}
+
+.crumbs a {
+  color: var(--color-ink);
+}

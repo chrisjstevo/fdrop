@@ -1,0 +1,43 @@
+{
+  "name": "fdrop",
+  "dockerComposeFile": "compose.yaml",
+  "service": "dev",
+  "runServices": ["dev", "keycloak", "sftp-target", "prometheus"],
+  "workspaceFolder": "/workspaces/fdrop",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": { "version": "none", "installMaven": "true", "mavenVersion": "3.9" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/aws-cli:1": {}
+  },
+  "forwardPorts": [8080, 8081, 2222, 5173, 8180, 9090, 9000, 9001],
+  "portsAttributes": {
+    "8080": { "label": "fdrop HTTP" },
+    "8081": { "label": "fdrop management (metrics)" },
+    "2222": { "label": "fdrop SFTP" },
+    "5173": { "label": "Vite dev server" },
+    "8180": { "label": "Keycloak" },
+    "9090": { "label": "Prometheus" },
+    "9000": { "label": "MinIO API" },
+    "9001": { "label": "MinIO console" }
+  },
+  "remoteEnv": {
+    "FDROP_CONFIG": "/workspaces/fdrop/.devcontainer/fdrop.dev.yaml",
+    "FDROP_AUTH_OIDC_ISSUER": "http://localhost:8180/realms/fdrop",
+    "FDROP_AUTH_OIDC_WEBCLIENTSECRET": "fdrop-web-dev-secret",
+    "FDROP_AUTH_OIDC_SFTPCLIENTSECRET": "fdrop-sftp-dev-secret",
+    "FDROP_LOG_FORMAT": "PLAIN"
+  },
+  "updateRemoteUserUID": false,
+  "postCreateCommand": "./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-containers",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}

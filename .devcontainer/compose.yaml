@@ -1,0 +1,38 @@
+# .devcontainer/compose.yaml (run by podman-compose)
+services:
+  dev:
+    image: mcr.microsoft.com/devcontainers/java:21
+    command: sleep infinity
+    userns_mode: keep-id             # rootless Podman: workspace files keep the host user's ownership
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock                  # Testcontainers uses Podman's Docker-compatible API
+      TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: ${PODMAN_SOCKET:-/run/podman/podman.sock}
+      TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED: "true"
+    volumes:
+      - ..:/workspaces/fdrop:z
+      - fdrop-m2:/home/vscode/.m2
+      - ${PODMAN_SOCKET:-/run/podman/podman.sock}:/var/run/docker.sock
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    network_mode: service:dev        # shares localhost with the dev container
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8180
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak/fdrop-realm.json:/opt/keycloak/data/import/fdrop-realm.json:ro,z
+  prometheus:                        # scrapes fdrop's /metrics and evaluates the alert rules
+    image: quay.io/prometheus/prometheus:v3.5.0
+    network_mode: service:dev        # reaches fdrop at localhost:8081
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
+      - ../deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro,z
+  sftp-target:                       # destination for trying forward folders
+    image: docker.io/atmoz/sftp:alpine
+    command: "target::1001::inbox"   # no password: public-key login only
+    volumes:
+      - ./sftp-target/authorized_keys:/home/target/.ssh/keys/fdrop.pub:ro,z
+volumes:
+  fdrop-m2:

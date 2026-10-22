@@ -1,0 +1,81 @@
+groups:
+  - name: fdrop
+    rules:
+      - alert: FdropDown
+        expr: up{job="fdrop"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: fdrop is not answering scrapes on its management port
+
+      - alert: FdropNotReady
+        expr: probe_success{job="fdrop-ready"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: fdrop /readyz is failing (metadata DB or storage unreachable)
+
+      - alert: FdropStorageErrors
+        expr: |
+          sum(rate(fdrop_storage_operation_seconds_count{outcome="error"}[10m]))
+            / sum(rate(fdrop_storage_operation_seconds_count[10m])) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: more than 1% of storage operations are failing
+
+      - alert: FdropForwardFailing
+        expr: |
+          sum by (destination) (increase(fdrop_forward_failures_total[30m])) > 0
+            unless sum by (destination) (increase(fdrop_forward_send_seconds_count{outcome="ok"}[30m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "forwarding to destination {{ $labels.destination }} has failed for 30 minutes"
+
+      - alert: FdropForwardHostKeyMismatch
+        expr: increase(fdrop_forward_failures_total{reason="host_key_mismatch"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "destination {{ $labels.destination }} presented an unexpected host key"
+          description: The destination's host key no longer matches the pin. Check with its owner before re-pinning.
+
+      - alert: FdropKeycloakErrors
+        expr: |
+          sum(rate(fdrop_keycloak_request_seconds_count{outcome="error"}[10m]))
+            / sum(rate(fdrop_keycloak_request_seconds_count[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: more than 5% of calls to Keycloak are failing
+
+      - alert: FdropSftpAuthFailureSpike
+        expr: sum(increase(fdrop_sftp_auth_total{result="failure"}[5m])) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: more than 50 SFTP login failures in 5 minutes
+
+      - alert: FdropUploadAssemblySlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(fdrop_upload_assembly_seconds_bucket[15m]))) > 300
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 95th percentile upload assembly time is over 5 minutes
+
+      - alert: FdropHeapHigh
+        expr: |
+          sum(jvm_memory_used_bytes{job="fdrop",area="heap"})
+            / sum(jvm_memory_max_bytes{job="fdrop",area="heap"}) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: fdrop JVM heap above 90% of its maximum

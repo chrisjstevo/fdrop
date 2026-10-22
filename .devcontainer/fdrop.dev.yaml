@@ -1,0 +1,32 @@
+# fdrop configuration for the dev container. Development values only: never use these secrets elsewhere.
+http:
+  port: 8080
+management:
+  port: 8081
+  metricsToken: ""
+sftp:
+  port: 2222
+  hostKeyPath: ./data/ssh_host_ed25519_key
+  spoolDir: ./data/spool
+auth:
+  oidc:
+    issuer: ${FDROP_AUTH_OIDC_ISSUER:-http://localhost:8180/realms/fdrop}
+    webClientSecret: ${FDROP_AUTH_OIDC_WEBCLIENTSECRET:-fdrop-web-dev-secret}
+    sftpClientSecret: ${FDROP_AUTH_OIDC_SFTPCLIENTSECRET:-fdrop-sftp-dev-secret}
+  twoFactor:
+    # off in dev so the dev users keep signing in with just a password; any of them can still turn it on from the
+    # Account page. Start fdrop with FDROP_AUTH_TWOFACTOR_REQUIRE=admins to try the production behaviour.
+    require: none
+  session:
+    # browsers treat localhost as secure, so Secure cookies work over plain http here
+    secureCookie: true
+forward:
+  allowedHosts: [sftp-target]
+  # fixed 32-byte development key; generate your own for anything real (openssl rand -base64 32)
+  encryptionKey: ZmRyb3AtZGV2LWVuY3J5cHRpb24ta2V5LW5vdC1zZWM=
+storage:
+  type: local
+  local:
+    root: ./data/files
+db:
+  url: jdbc:h2:file:./data/meta;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
