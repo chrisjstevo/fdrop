@@ -33,6 +33,6 @@ services:
     image: docker.io/atmoz/sftp:alpine
     command: "target::1001::inbox"   # no password: public-key login only
     volumes:
-      - ./sftp-target/authorized_keys:/home/target/.ssh/keys/fdrop.pub:ro,z
+      - ./sftp-target:/home/target/.ssh/keys:ro,z   # every file is a key; README.pub keeps the folder non-empty
 volumes:
   fdrop-m2:
