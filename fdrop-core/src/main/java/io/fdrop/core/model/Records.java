@@ -1,5 +1,8 @@
 package io.fdrop.core.model;
 
+import io.fdrop.core.model.Enums.AppMethod;
+import io.fdrop.core.model.Enums.CertMatch;
+import io.fdrop.core.model.Enums.CertState;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.KeyState;
@@ -7,8 +10,12 @@ import io.fdrop.core.model.Enums.Permission;
 import io.fdrop.core.model.Enums.RecordStatus;
 import io.fdrop.core.model.Enums.ServerAuth;
 import io.fdrop.core.model.Enums.UploadState;
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Enums.Via;
 import io.fdrop.core.model.Enums.WentTo;
+
+import java.util.List;
+import java.util.Set;
 
 /** Rows of the metadata DB, one record type per table. */
 public final class Records {
@@ -17,7 +24,26 @@ public final class Records {
     }
 
     public record User(String sub, String username, String email, long quotaBytes, long usedBytes, long createdAt,
-                       Long lastLoginAt) {
+                       Long lastLoginAt, UserKind kind) {
+    }
+
+    /**
+     * An application account's fdrop settings; Keycloak holds its username, password and enabled flag.
+     *
+     * @param allowedSources CIDRs logins may come from; empty means anywhere
+     */
+    public record AppAccount(String sub, String description, String responsibleSub, Set<AppMethod> allowedMethods,
+                             List<String> allowedSources, Long passwordSetAt, String createdBy,
+                             long createdAt, Long lastLoginAt) {
+    }
+
+    /**
+     * A client certificate registered on an application account. PINNED matches {@code sha256} (of the DER
+     * certificate); SUBJECT matches {@code subject} (an RFC 2253 DN) or {@code san} ({@code DNS:}, {@code URI:} or
+     * {@code EMAIL:} prefixed) on a certificate that chains to a trusted CA.
+     */
+    public record AppClientCert(String id, String sub, CertMatch match, String sha256, String subject, String san,
+                                Long notAfter, CertState state, long createdAt) {
     }
 
     public record SshKey(String id, String userSub, String name, String keyType, String publicKey,

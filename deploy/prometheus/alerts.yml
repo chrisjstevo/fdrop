@@ -61,6 +61,20 @@ groups:
         annotations:
           summary: more than 50 SFTP login failures in 5 minutes
 
+      - alert: FdropAppAuthFailures
+        expr: sum(increase(fdrop_app_auth_total{result!="success"}[5m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: more than 20 application account login failures in 5 minutes
+
+      - alert: FdropAppCredentialExpiring
+        expr: sum(fdrop_app_credentials_expiring{within="7d"}) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: an application account password or client certificate expires within 7 days
+
       - alert: FdropUploadAssemblySlow
         expr: |
           histogram_quantile(0.95, sum by (le) (rate(fdrop_upload_assembly_seconds_bucket[15m]))) > 300

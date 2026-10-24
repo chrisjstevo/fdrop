@@ -1,10 +1,12 @@
 package io.fdrop.core;
 
+import io.fdrop.core.auth.ClientCertificates;
 import io.fdrop.core.auth.KeycloakAdmin;
 import io.fdrop.core.auth.OidcClient;
 import io.fdrop.core.auth.TwoFactorService;
 import io.fdrop.core.auth.UserStatusCache;
 import io.fdrop.core.config.FdropConfig;
+import io.fdrop.core.db.AppAccountRepo;
 import io.fdrop.core.db.Db;
 import io.fdrop.core.db.DestinationRepo;
 import io.fdrop.core.db.FolderRepo;
@@ -13,6 +15,7 @@ import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.metrics.FdropMetrics;
 import io.fdrop.core.service.AccountService;
+import io.fdrop.core.service.AppAccountService;
 import io.fdrop.core.service.DestinationService;
 import io.fdrop.core.service.FileService;
 import io.fdrop.core.service.FolderService;
@@ -42,6 +45,7 @@ public final class Fdrop implements AutoCloseable {
     public final DestinationRepo destinations;
     public final UploadRepo uploads;
     public final RecordRepo records;
+    public final AppAccountRepo appAccountRepo;
     public final OidcClient oidc;
     public final KeycloakAdmin keycloak;
     public final UserStatusCache userStatus;
@@ -54,6 +58,7 @@ public final class Fdrop implements AutoCloseable {
     public final DestinationService destinationService;
     public final UserAdminService userAdmin;
     public final AccountService accounts;
+    public final AppAccountService appAccounts;
     public final HostPolicy hostPolicy;
     public final SshTools ssh;
     public final Janitor janitor;
@@ -75,6 +80,7 @@ public final class Fdrop implements AutoCloseable {
         this.destinations = new DestinationRepo(db);
         this.uploads = new UploadRepo(db);
         this.records = new RecordRepo(db);
+        this.appAccountRepo = new AppAccountRepo(db);
         this.oidc = oidcFactory.apply(config.auth.oidc, metrics);
         this.keycloak = new KeycloakAdmin(oidc, metrics);
         this.userStatus = new UserStatusCache(keycloak, config.auth.oidc);
@@ -90,10 +96,13 @@ public final class Fdrop implements AutoCloseable {
         this.destinationService = new DestinationService(destinations, folders, users, records, ssh,
                 SecretBox.fromBase64(config.forward.encryptionKey), hostPolicy);
         this.userAdmin = new UserAdminService(config, keycloak, userStatus, twoFactor, users, folders, destinations,
-                uploads, records, storage, folderService);
+                uploads, records, storage, folderService, appAccountRepo);
+        this.appAccounts = new AppAccountService(config, db, appAccountRepo, users, userAdmin, twoFactor, oidc,
+                new ClientCertificates(config.auth.applications.mtls), metrics,
+                AppAccountService.keycloak(keycloak, userStatus, config));
         this.accounts = new AccountService(config, users, uploads, records, folders, destinations, resolver, ssh);
         this.janitor = new Janitor(config, db, uploads, uploadService, records, folders, destinations, users, storage,
-                metrics);
+                metrics, appAccounts);
         records.resetStuckSending(Long.MAX_VALUE);
     }
 

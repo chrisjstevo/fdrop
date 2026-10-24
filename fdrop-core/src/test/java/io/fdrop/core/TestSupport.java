@@ -35,6 +35,8 @@ public final class TestSupport {
     public static Fdrop fdrop(FdropConfig cfg, StorageBackend backend, FakeDirectory directory) {
         Fdrop app = new Fdrop(cfg, backend, new FakeSsh(), FakeOidc::new);
         app.twoFactor.useDirectory(directory);
+        app.appAccounts.useDirectory(directory.applications());
+        ((FakeOidc) app.oidc).usePasswords(directory::password);
         return app;
     }
 
@@ -44,6 +46,16 @@ public final class TestSupport {
 
     public static Principal admin(String name) {
         return new Principal("sub-" + name, name, name + "@test", true, true);
+    }
+
+    /** An application account; test names start {@code app} so the fakes recognise them. */
+    public static Principal app(String name) {
+        return new Principal("sub-" + name, name, null, false, false, true);
+    }
+
+    /** The principal the fakes give a username: {@code app…} applications, {@code admin…} admins, else users. */
+    public static Principal byName(String name) {
+        return name.startsWith("app") ? app(name) : name.startsWith("admin") ? admin(name) : user(name);
     }
 
     /** SSH tools that accept any key and never connect anywhere. */

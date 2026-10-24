@@ -12,6 +12,7 @@ import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Records.Folder;
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardDestination;
 import io.fdrop.core.model.Records.SshKey;
@@ -57,9 +58,13 @@ public final class AccountService {
         this.ssh = ssh;
     }
 
-    /** Called at every login: creates the fdrop row on first sight. */
+    /** Called at every login: creates the fdrop row on first sight, with the quota for the account's kind. */
     public User ensure(Principal p) {
-        return users.upsert(p.sub(), p.username(), p.email(), cfg.limits.defaultQuota.bytes());
+        if (p.app()) {
+            return users.upsert(p.sub(), p.username(), p.email(), cfg.limits.defaultAppQuota.bytes(),
+                    UserKind.APPLICATION);
+        }
+        return users.upsert(p.sub(), p.username(), p.email(), cfg.limits.defaultQuota.bytes(), UserKind.USER);
     }
 
     public User me(Principal p) {
@@ -70,8 +75,9 @@ public final class AccountService {
         return uploads.reservedBytes(p.sub());
     }
 
+    /** People and application accounts an owner can add as members. */
     public List<User> searchUsers(Principal p, String q) {
-        if (!p.canUseFiles()) {
+        if (!p.isPerson()) {
             throw FdropException.forbidden("the standard role is required");
         }
         return users.search(q == null ? "" : q, 20);
@@ -84,8 +90,9 @@ public final class AccountService {
     }
 
     public SshKey addKey(Principal p, String name, String publicKey) {
-        if (!p.canUseFiles()) {
-            throw FdropException.forbidden("the standard role is required");
+        if (!p.isPerson()) {
+            throw FdropException.forbidden(p.app() ? "an admin manages an application account's SSH keys"
+                    : "the standard role is required");
         }
         ensure(p);
         SshTools.ParsedKey k = ssh.parsePublicKey(publicKey);
@@ -105,6 +112,9 @@ public final class AccountService {
     }
 
     public void deleteKey(Principal p, String id) {
+        if (p.app()) {
+            throw FdropException.forbidden("an admin manages an application account's SSH keys");
+        }
         if (!users.deleteKey(p.sub(), id)) {
             throw FdropException.notFound("no such key");
         }

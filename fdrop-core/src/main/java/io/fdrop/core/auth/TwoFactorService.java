@@ -77,8 +77,7 @@ public class TwoFactorService {
             public Optional<Principal> findByUsername(String username) {
                 return admin.findByUsername(username).filter(KeycloakAdmin.KcUser::enabled).map(u -> {
                     List<String> roles = admin.realmRoles(u.id());
-                    return new Principal(u.id(), u.username(), u.email(), roles.contains(oidc.userRole),
-                            roles.contains(oidc.adminRole));
+                    return Principal.of(u.id(), u.username(), u.email(), roles, oidc);
                 });
             }
 
@@ -115,6 +114,9 @@ public class TwoFactorService {
 
     /** The policy alone: does this user have to use a second factor, whether or not they have one yet? */
     public boolean policyRequires(Principal p) {
+        if (p.app()) {
+            return false;
+        }
         return switch (policy) {
             case NONE -> false;
             case ADMINS -> p.admin();
@@ -124,6 +126,10 @@ public class TwoFactorService {
 
     /** The policy, or a factor the user set up themselves: such a user is always asked for it. */
     public boolean needed(Principal p) {
+        if (p.app()) {
+            // application accounts never use a second factor, whatever the policy; any factor found is removed
+            return false;
+        }
         return policyRequires(p) || hasFactor(p.sub());
     }
 

@@ -6,8 +6,10 @@ import io.fdrop.core.auth.Principal;
 import io.fdrop.core.config.Durations;
 import io.fdrop.core.config.FdropConfig;
 import io.fdrop.core.error.FdropException;
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.SshKey;
 import io.fdrop.core.model.Records.User;
+import io.fdrop.core.service.AppAccountService;
 import io.fdrop.core.util.TrustedProxies;
 import io.fdrop.sftp.fs.FdropFileSystem;
 import io.fdrop.sftp.fs.FdropFileSystemProvider;
@@ -226,6 +228,17 @@ public final class SftpServer implements AutoCloseable {
         return true;
     }
 
+    /** Runs an application account's checks (method, source, password age); false when they refuse. */
+    private boolean application(Runnable checks, String method) {
+        try {
+            checks.run();
+            return true;
+        } catch (AppAccountService.LoginRefused e) {
+            app.metrics.sftpAuth(method, false);
+            return false;
+        }
+    }
+
     /** True when this user signs in with two factors, so a password alone is not enough. */
     private boolean needsTwoFactor(String username) {
         return app.twoFactor.findByUsername(username).map(app.twoFactor::needed).orElse(false);
@@ -243,6 +256,10 @@ public final class SftpServer implements AutoCloseable {
             if (p == null) {
                 app.metrics.sftpAuth("password", false);
                 Audit.log("login.failed", "user", username, "ip", clientIp(session), "protocol", "SFTP");
+                return false;
+            }
+            if (p.app() && !application(() -> app.appAccounts.passwordChecked(p, clientIp(session), "sftp",
+                    session.getClientVersion()), "password")) {
                 return false;
             }
             return admit(session, p, "password");
@@ -265,11 +282,16 @@ public final class SftpServer implements AutoCloseable {
             if (u.isEmpty()) {
                 return false;
             }
-            Optional<Principal> active = app.userStatus.active(u.get().sub());
+            Optional<Principal> active = u.get().kind() == UserKind.APPLICATION
+                    ? app.appAccounts.active(u.get().sub()) : app.userStatus.active(u.get().sub());
             if (active.isEmpty()) {
                 app.metrics.sftpAuth("publickey", false);
                 Audit.log("login.failed", "user", username, "ip", clientIp(session), "protocol", "SFTP",
                         "reason", "disabled in Keycloak");
+                return false;
+            }
+            if (active.get().app() && !application(() -> app.appAccounts.keyLogin(active.get(), fp,
+                    clientIp(session), session.getClientVersion()), "publickey")) {
                 return false;
             }
             app.users.touchKey(k.get().id());
@@ -293,6 +315,10 @@ public final class SftpServer implements AutoCloseable {
             boolean wantsCode;
             try {
                 Optional<Principal> who = app.twoFactor.findByUsername(username);
+                if (who.isPresent() && who.get().app()) {
+                    // application accounts use the plain password method or keys, never keyboard-interactive
+                    return null;
+                }
                 wantsCode = who.map(app.twoFactor::needed).orElse(false);
                 if (wantsCode && (!app.twoFactor.config().sftpPasswordWithCode
                         || !app.twoFactor.hasOtp(who.get().sub()))) {

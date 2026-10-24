@@ -12,6 +12,7 @@ import io.fdrop.core.metrics.FdropMetrics;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.UploadState;
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.Folder;
 import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardDestination;
@@ -50,12 +51,13 @@ public final class Janitor implements AutoCloseable {
     private final UserRepo users;
     private final StorageBackend storage;
     private final FdropMetrics metrics;
+    private final AppAccountService appAccounts;
     private final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().name("janitor").daemon().factory());
 
     public Janitor(FdropConfig cfg, Db db, UploadRepo uploads, UploadService uploadService, RecordRepo records,
                    FolderRepo folders, DestinationRepo destinations, UserRepo users, StorageBackend storage,
-                   FdropMetrics metrics) {
+                   FdropMetrics metrics, AppAccountService appAccounts) {
         this.cfg = cfg;
         this.db = db;
         this.uploads = uploads;
@@ -66,6 +68,7 @@ public final class Janitor implements AutoCloseable {
         this.users = users;
         this.storage = storage;
         this.metrics = metrics;
+        this.appAccounts = appAccounts;
     }
 
     public void start() {
@@ -157,7 +160,10 @@ public final class Janitor implements AutoCloseable {
                 jobs.put(List.of(s.name(), d.id()), records.countJobs(s, d.id()));
             }
         }
-        metrics.update(new FdropMetrics.Snapshot(users.count(), users.totalUsed(), foldersByType, sessions, jobs));
+        Map<String, Long> usersByKind = Map.of("user", users.count(UserKind.USER),
+                "application", users.count(UserKind.APPLICATION));
+        metrics.update(new FdropMetrics.Snapshot(usersByKind, users.totalUsed(), foldersByType, sessions, jobs));
+        metrics.appCredentialsExpiring(appAccounts.expiring());
     }
 
     @Override

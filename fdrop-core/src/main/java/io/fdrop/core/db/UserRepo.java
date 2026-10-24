@@ -1,5 +1,6 @@
 package io.fdrop.core.db;
 
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.SshKey;
 import io.fdrop.core.model.Records.User;
 
@@ -20,7 +21,7 @@ public final class UserRepo {
     private static User user(ResultSet rs) throws SQLException {
         return new User(rs.getString("sub"), rs.getString("username"), rs.getString("email"),
                 rs.getLong("quota_bytes"), rs.getLong("used_bytes"), rs.getLong("created_at"),
-                Db.getLong(rs, "last_login_at"));
+                Db.getLong(rs, "last_login_at"), UserKind.valueOf(rs.getString("kind")));
     }
 
     private static SshKey key(ResultSet rs) throws SQLException {
@@ -37,14 +38,17 @@ public final class UserRepo {
         return db.queryOne("SELECT * FROM users WHERE username = ?", UserRepo::user, username);
     }
 
-    /** Creates the row on first sight and keeps username and email in step with Keycloak. */
-    public User upsert(String sub, String username, String email, long defaultQuota) {
+    /**
+     * Creates the row on first sight and keeps username and email in step with Keycloak. The kind and quota are
+     * set only when the row is created.
+     */
+    public User upsert(String sub, String username, String email, long defaultQuota, UserKind kind) {
         return db.inTransaction(() -> {
             Optional<User> existing = find(sub);
             long now = System.currentTimeMillis();
             if (existing.isEmpty()) {
-                db.update("INSERT INTO users (sub, username, email, quota_bytes, used_bytes, created_at, last_login_at)"
-                        + " VALUES (?, ?, ?, ?, 0, ?, ?)", sub, username, email, defaultQuota, now, now);
+                db.update("INSERT INTO users (sub, username, email, quota_bytes, used_bytes, created_at, last_login_at,"
+                        + " kind) VALUES (?, ?, ?, ?, 0, ?, ?, ?)", sub, username, email, defaultQuota, now, now, kind);
             } else {
                 db.update("UPDATE users SET username = ?, email = ?, last_login_at = ? WHERE sub = ?",
                         username, email, now, sub);
@@ -61,6 +65,10 @@ public final class UserRepo {
 
     public long count() {
         return db.queryLong("SELECT COUNT(*) FROM users");
+    }
+
+    public long count(UserKind kind) {
+        return db.queryLong("SELECT COUNT(*) FROM users WHERE kind = ?", kind);
     }
 
     public long totalUsed() {

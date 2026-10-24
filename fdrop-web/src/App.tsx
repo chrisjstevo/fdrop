@@ -6,6 +6,7 @@ import { useMe } from "./auth/useMe";
 import { Layout } from "./components/Layout";
 import { Empty, ErrorNote, Logo } from "./components/ui";
 import { AccountPage } from "./pages/AccountPage";
+import { AdminApplicationPage, AdminApplicationsPage } from "./pages/AdminApplicationsPage";
 import { AdminDestinationPage, AdminDestinationsPage } from "./pages/AdminDestinationsPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { FilesPage } from "./pages/FilesPage";
@@ -114,6 +115,8 @@ function SignedIn() {
             <Route path="/uploads" element={<Standard><MyUploadsPage /></Standard>} />
             <Route path="/account" element={<AccountPage />} />
             <Route path="/admin/users" element={<Admin><AdminUsersPage /></Admin>} />
+            <Route path="/admin/applications" element={<Admin><AdminApplicationsPage /></Admin>} />
+            <Route path="/admin/applications/:id" element={<Admin><AdminApplicationPage /></Admin>} />
             <Route path="/admin/destinations" element={<Admin><AdminDestinationsPage /></Admin>} />
             <Route path="/admin/destinations/:id" element={<Admin><AdminDestinationPage /></Admin>} />
             <Route path="*" element={<Empty title="Page not found" />} />

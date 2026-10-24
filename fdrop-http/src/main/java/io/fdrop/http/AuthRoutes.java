@@ -111,6 +111,12 @@ final class AuthRoutes {
             throw e;
         }
         Principal who = t.principal();
+        if (who.app()) {
+            app.metrics.login("failure");
+            Audit.log("login.refused", "user", who.username(), "ip", ctx.clientIp(), "protocol", "HTTP",
+                    "reason", who.mixedRoles() ? "holds fdrop-app with a person's role" : "application account");
+            return Response.redirect("/sign-in-problem?reason=" + (who.mixedRoles() ? "mixed-roles" : "application"));
+        }
         if (p.action() != null || ctx.query("kc_action_status") != null) {
             // an enrolment may have added a factor
             app.twoFactor.invalidate(who.sub());

@@ -48,7 +48,8 @@ public final class AccountApi {
         r.get("/api/v1/me/uploads", this::uploads);
         r.get("/api/v1/users", ctx -> Response.json(app.accounts.searchUsers(ctx.principal(), ctx.query("search"))
                 .stream().filter(u -> !u.sub().equals(ctx.principal().sub()))
-                .map(u -> Map.of("username", u.username())).toList()));
+                .map(u -> Map.of("username", u.username(), "kind", u.kind().name().toLowerCase(Locale.ROOT)))
+                .toList()));
         r.get("/api/v1/forward-destinations", ctx -> Response.json(app.destinationService.forUser(ctx.principal())));
     }
 
@@ -59,6 +60,7 @@ public final class AccountApi {
         m.put("sub", p.sub());
         m.put("username", p.username());
         m.put("email", p.email());
+        m.put("kind", p.app() ? "application" : "user");
         m.put("roles", Map.of("standard", p.user(), "admin", p.admin()));
         m.put("quotaBytes", u.quotaBytes());
         m.put("usedBytes", u.usedBytes());

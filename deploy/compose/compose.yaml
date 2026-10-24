@@ -1,8 +1,14 @@
 # Local demo only: fdrop (local storage) with Keycloak and the dev realm. Not for production.
-#   ./mvnw -pl fdrop-server -am package jib:buildTar && podman load -i fdrop-server/target/jib-image.tar
-#   podman-compose -f deploy/compose/compose.yaml up
-# Then open http://localhost:8080 and sign in as admin / admin.
+#   ./mvnw -pl fdrop-server -am package jib:buildTar -DskipTests && podman load -i fdrop-server/target/jib-image.tar
+#   podman compose -f deploy/compose/compose.yaml up -d
+# Then open https://localhost:8443 and sign in as admin / admin. See "Running with Podman" in README.md.
+# The `certs` service first creates a dev CA and certificates in deploy/compose/certs/; fdrop serves HTTPS only.
 services:
+  certs:                             # one-shot: creates the dev CA and certificates in ./certs/
+    image: docker.io/library/alpine:3.22
+    command: ["sh", "-c", "apk add -q --no-cache openssl && sh /repo/scripts/dev-certs.sh /repo/deploy/compose/certs"]
+    volumes:
+      - ../..:/repo:z
   keycloak:
     image: quay.io/keycloak/keycloak:26.4
     command: ["start-dev", "--import-realm", "--http-port=8180"]
@@ -10,9 +16,13 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HOSTNAME: http://localhost:8180
-    ports: ["8180:8180", "8080:8080", "2222:2222", "127.0.0.1:8081:8081"]   # fdrop shares this network
+      KC_TRUSTSTORE_PATHS: /etc/fdrop/certs/ca.crt   # for back-channel logout calls to fdrop's HTTPS port
+    ports: ["8180:8180", "8443:8443", "8444:8444", "2222:2222", "127.0.0.1:8081:8081"]   # fdrop shares this network
     volumes:
       - ../../.devcontainer/keycloak/fdrop-realm.json:/opt/keycloak/data/import/fdrop-realm.json:ro,z
+      - ./certs:/etc/fdrop/certs:ro,z
+    depends_on:
+      certs: { condition: service_completed_successfully }
   fdrop:
     image: localhost/fdrop:0.1.0-SNAPSHOT
     network_mode: service:keycloak   # same localhost, so the issuer URL matches for browser and server
@@ -21,9 +31,16 @@ services:
       FDROP_AUTH_OIDC_WEBCLIENTSECRET: fdrop-web-dev-secret
       FDROP_AUTH_OIDC_SFTPCLIENTSECRET: fdrop-sftp-dev-secret
       FDROP_AUDIT_FILE: /var/lib/fdrop/audit.log
+      # the dev config's certificate paths are relative to the repo; point them at the mounted certs
+      FDROP_HTTP_TLS_CERT: /etc/fdrop/certs/server.crt
+      FDROP_HTTP_TLS_KEY: /etc/fdrop/certs/server.key
+      FDROP_AUTH_APPLICATIONS_MTLS_TRUSTEDCAS: /etc/fdrop/certs/ca.crt
     volumes:
       - ../../.devcontainer/fdrop.dev.yaml:/etc/fdrop/fdrop.yaml:ro,z
+      - ./certs:/etc/fdrop/certs:ro,z
       - fdrop-data:/var/lib/fdrop
-    depends_on: [keycloak]
+    depends_on:
+      keycloak: { condition: service_started }
+      certs: { condition: service_completed_successfully }
 volumes:
   fdrop-data:

@@ -21,6 +21,7 @@ const NAV: NavItem[] = [
   { to: "/uploads", label: "My uploads", standard: true },
   { to: "/folders", label: "Manage folders", standard: true },
   { to: "/admin/users", label: "Admin: users", admin: true },
+  { to: "/admin/applications", label: "Admin: applications", admin: true },
   { to: "/admin/destinations", label: "Admin: destinations", admin: true },
 ];
 

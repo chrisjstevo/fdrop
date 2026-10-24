@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { del, get, patch, post, put, q } from "../api/client";
-import type { DestinationOption, FolderView, ForwardJob, MemberView } from "../api/types";
+import type { DestinationOption, FolderView, ForwardJob, MemberView, UserMatch } from "../api/types";
 import { useMe } from "../auth/useMe";
 import { Badge, Button, Dialog, DialogActions, Empty, ErrorNote, Field, LinkButton, RowMenu } from "../components/ui";
 import { formatBytes, formatDate } from "../util/format";
@@ -474,7 +474,7 @@ function MembersPanel({
   const suggestions = useQuery({
     queryKey: ["user-search", username],
     enabled: username.trim().length >= 1,
-    queryFn: () => get<{ username: string }[]>("/api/v1/users?search=" + q(username.trim())),
+    queryFn: () => get<UserMatch[]>("/api/v1/users?search=" + q(username.trim())),
   });
   const add = useMutation({
     mutationFn: (m: MemberView) => put(`/api/v1/folders/${q(folder.id)}/members/${q(m.username)}`, { permission: m.permission }),
@@ -511,7 +511,7 @@ function MembersPanel({
         />
         <datalist id="member-suggestions">
           {(suggestions.data ?? []).map((u) => (
-            <option key={u.username} value={u.username} />
+            <option key={u.username} value={u.username} label={u.kind === "application" ? `${u.username} (App)` : u.username} />
           ))}
         </datalist>
         <label htmlFor="member-permission" className="visually-hidden">
@@ -533,7 +533,9 @@ function MembersPanel({
           {folder.members.map((m) => (
             <li key={m.username} className={s.card}>
               <div className={s.cardBody}>
-                <div className={s.cardTitle}>{m.username}</div>
+                <div className={s.cardTitle}>
+                  {m.username} {m.kind === "APPLICATION" && <Badge kind="neutral">App</Badge>}
+                </div>
                 <div className={s.cardMeta}>{m.permission === "WRITE" ? "Read-write" : "Read-only"}</div>
               </div>
               <RowMenu
@@ -543,7 +545,8 @@ function MembersPanel({
                     label: m.permission === "WRITE" ? "Make read-only" : "Make read-write",
                     onSelect: () => add.mutate({ username: m.username, permission: m.permission === "WRITE" ? "READ" : "WRITE" }),
                   },
-                  { label: "Make owner", onSelect: () => onTransfer(m.username) },
+                  // application accounts are members only and never own folders
+                  ...(m.kind === "APPLICATION" ? [] : [{ label: "Make owner", onSelect: () => onTransfer(m.username) }]),
                   { label: "Remove", onSelect: () => remove.mutate(m.username), danger: true },
                 ]}
               />

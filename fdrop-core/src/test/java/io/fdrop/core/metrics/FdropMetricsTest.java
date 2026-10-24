@@ -31,7 +31,9 @@ class FdropMetricsTest {
         m.forwardBytes("dst_1", 100);
         m.forwardFailure("dst_1", "connect");
         m.keycloakCall("token", true, 1000);
-        m.update(new FdropMetrics.Snapshot(3, 1000, Map.of("shared", 1L), Map.of("OPEN", 2L),
+        m.appAuth("http", "mtls", "success");
+        m.appCredentialsExpiring(Map.of(List.of("certificate", "30d"), 1L));
+        m.update(new FdropMetrics.Snapshot(Map.of("user", 3L, "application", 1L), 1000, Map.of("shared", 1L), Map.of("OPEN", 2L),
                 Map.of(List.of("QUEUED", "dst_1"), 1L)));
 
         String text = m.scrape(null);
@@ -57,7 +59,8 @@ class FdropMetricsTest {
         }
         assertThat(seen).contains("fdrop_build_info", "fdrop_http_requests_seconds", "fdrop_transfer_bytes_total",
                 "fdrop_storage_used_bytes", "fdrop_forward_jobs", "fdrop_forward_bytes_total",
-                "fdrop_sftp_auth_total", "fdrop_keycloak_request_seconds");
+                "fdrop_sftp_auth_total", "fdrop_keycloak_request_seconds", "fdrop_users", "fdrop_app_auth_total",
+                "fdrop_app_credentials_expiring");
         assertThat(m.scrape("application/openmetrics-text")).contains("# EOF");
     }
 }

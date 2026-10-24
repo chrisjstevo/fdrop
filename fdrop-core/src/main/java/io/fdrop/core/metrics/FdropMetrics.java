@@ -50,7 +50,9 @@ public final class FdropMetrics {
             Map.entry("fdrop_forward_bytes_total", Set.of("destination")),
             Map.entry("fdrop_forward_failures_total", Set.of("destination", "reason")),
             Map.entry("fdrop_keycloak_request_seconds", Set.of("operation", "outcome")),
-            Map.entry("fdrop_users", Set.of()),
+            Map.entry("fdrop_users", Set.of("kind")),
+            Map.entry("fdrop_app_auth_total", Set.of("protocol", "method", "result")),
+            Map.entry("fdrop_app_credentials_expiring", Set.of("type", "within")),
             Map.entry("fdrop_folders", Set.of("type")));
 
     private final PrometheusMeterRegistry registry;
@@ -58,7 +60,8 @@ public final class FdropMetrics {
     private final AtomicLong httpConnections = new AtomicLong();
     private final AtomicLong sftpSessions = new AtomicLong();
     private final AtomicLong storageUsed = new AtomicLong();
-    private final AtomicLong users = new AtomicLong();
+    private final MultiGauge users;
+    private final MultiGauge appCredentialsExpiring;
     private final MultiGauge folders;
     private final MultiGauge uploadSessions;
     private final MultiGauge forwardJobs;
@@ -83,7 +86,8 @@ public final class FdropMetrics {
         Gauge.builder("fdrop.http.connections.active", httpConnections, AtomicLong::get).register(registry);
         Gauge.builder("fdrop.sftp.sessions.active", sftpSessions, AtomicLong::get).register(registry);
         Gauge.builder("fdrop.storage.used", storageUsed, AtomicLong::get).baseUnit("bytes").register(registry);
-        Gauge.builder("fdrop.users", users, AtomicLong::get).register(registry);
+        users = MultiGauge.builder("fdrop.users").register(registry);
+        appCredentialsExpiring = MultiGauge.builder("fdrop.app.credentials.expiring").register(registry);
         folders = MultiGauge.builder("fdrop.folders").register(registry);
         uploadSessions = MultiGauge.builder("fdrop.upload.sessions").register(registry);
         forwardJobs = MultiGauge.builder("fdrop.forward.jobs").register(registry);
@@ -121,6 +125,19 @@ public final class FdropMetrics {
     public void sftpAuth(String method, boolean success) {
         Counter.builder("fdrop.sftp.auth").tags("method", method, "result", success ? "success" : "failure")
                 .register(registry).increment();
+    }
+
+    /** An application account login: {@code success}, {@code failure}, {@code method_not_allowed}, {@code source_refused}. */
+    public void appAuth(String protocol, String method, String result) {
+        Counter.builder("fdrop.app.auth").tags("protocol", protocol, "method", method, "result", result)
+                .register(registry).increment();
+    }
+
+    /** Application passwords and certificates expiring within each warning window, by [type, within]. */
+    public void appCredentialsExpiring(Map<List<String>, Long> counts) {
+        List<MultiGauge.Row<?>> rows = new ArrayList<>();
+        counts.forEach((k, v) -> rows.add(MultiGauge.Row.of(Tags.of("type", k.get(0), "within", k.get(1)), v)));
+        appCredentialsExpiring.register(rows, true);
     }
 
     public void login(String result) {
@@ -178,12 +195,14 @@ public final class FdropMetrics {
     }
 
     /** Snapshot values refreshed in the background from the metadata DB. */
-    public record Snapshot(long users, long storageUsed, Map<String, Long> foldersByType,
+    public record Snapshot(Map<String, Long> usersByKind, long storageUsed, Map<String, Long> foldersByType,
                            Map<String, Long> uploadSessionsByState, Map<List<String>, Long> forwardJobs) {
     }
 
     public void update(Snapshot s) {
-        users.set(s.users());
+        List<MultiGauge.Row<?>> byKind = new ArrayList<>();
+        s.usersByKind().forEach((kind, v) -> byKind.add(MultiGauge.Row.of(Tags.of("kind", kind), v)));
+        users.register(byKind, true);
         storageUsed.set(s.storageUsed());
         List<MultiGauge.Row<?>> f = new ArrayList<>();
         s.foldersByType().forEach((k, v) -> f.add(MultiGauge.Row.of(Tags.of("type", k), v)));

@@ -81,12 +81,18 @@ public class KeycloakAdmin {
 
     /** Creates a user and returns its id. A duplicate username gives 409. */
     public String createUser(String username, String email, String firstName, String lastName) {
+        return createUser(username, email, false, firstName, lastName);
+    }
+
+    /** As above; {@code emailVerified} for addresses fdrop made up itself, which nobody can verify. */
+    public String createUser(String username, String email, boolean emailVerified, String firstName,
+                             String lastName) {
         ObjectNode rep = json.createObjectNode();
         rep.put("username", username);
         rep.put("enabled", true);
         if (email != null && !email.isBlank()) {
             rep.put("email", email);
-            rep.put("emailVerified", false);
+            rep.put("emailVerified", emailVerified);
         }
         if (firstName != null) {
             rep.put("firstName", firstName);
@@ -105,6 +111,36 @@ public class KeycloakAdmin {
         cred.put("value", password);
         cred.put("temporary", true);
         call("PUT", "/users/" + enc(id) + "/reset-password", cred);
+    }
+
+    /** A permanent password, for application accounts, which never sign in interactively to change one. */
+    public void setPassword(String id, String password) {
+        ObjectNode cred = json.createObjectNode();
+        cred.put("type", "password");
+        cred.put("value", password);
+        cred.put("temporary", false);
+        call("PUT", "/users/" + enc(id) + "/reset-password", cred);
+    }
+
+    public void setEnabled(String id, boolean enabled) {
+        ObjectNode rep = json.createObjectNode();
+        rep.put("enabled", enabled);
+        call("PUT", "/users/" + enc(id), rep);
+    }
+
+    /** The id of the top-level group with this exact name. Needs query-groups. */
+    public Optional<String> groupId(String name) {
+        JsonNode arr = call("GET", "/groups?exact=true&briefRepresentation=true&search=" + enc(name), null);
+        for (JsonNode g : arr) {
+            if (name.equals(g.path("name").asText())) {
+                return Optional.of(g.path("id").asText());
+            }
+        }
+        return Optional.empty();
+    }
+
+    public void addToGroup(String id, String groupId) {
+        call("PUT", "/users/" + enc(id) + "/groups/" + enc(groupId), null);
     }
 
     public void sendUpdatePasswordEmail(String id) {

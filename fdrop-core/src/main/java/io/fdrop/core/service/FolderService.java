@@ -11,6 +11,7 @@ import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.Permission;
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.Folder;
 import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.FolderMember;
@@ -30,8 +31,8 @@ import java.util.Optional;
 /** Shared and forward folders: creation, members, ownership, forward settings and forward job status. */
 public final class FolderService {
 
-    /** A member as the owner sees them. */
-    public record MemberView(String username, Permission permission) {
+    /** A member as the owner sees them; {@code kind} tells people from application accounts. */
+    public record MemberView(String username, Permission permission, UserKind kind) {
     }
 
     /** A folder as one user sees it. */
@@ -94,8 +95,9 @@ public final class FolderService {
         List<MemberView> members = new ArrayList<>();
         if (owner) {
             for (FolderMember m : folders.members(f.id())) {
-                members.add(new MemberView(users.find(m.userSub()).map(User::username).orElse(m.userSub()),
-                        m.permission()));
+                Optional<User> mu = users.find(m.userSub());
+                members.add(new MemberView(mu.map(User::username).orElse(m.userSub()), m.permission(),
+                        mu.map(User::kind).orElse(UserKind.USER)));
             }
         }
         String path = (f.type() == FolderType.SHARED ? "/shared/" : "/forward/") + f.name();
@@ -105,6 +107,9 @@ public final class FolderService {
 
     public FolderView create(Principal p, FolderType type, String rawName, String destinationId, Integer keepDays) {
         requireUser(p);
+        if (!p.isPerson()) {
+            throw FdropException.forbidden("application accounts are members only and cannot create folders");
+        }
         String name = Names.folderName(rawName);
         Folder f = new Folder(Hashing.newId("fld"), type, name, p.sub(), System.currentTimeMillis());
         if (type == FolderType.FORWARD) {
@@ -238,6 +243,9 @@ public final class FolderService {
     public FolderView transferOwnership(Principal p, String id, String username) {
         Folder f = owned(p, id);
         User to = users.findByUsername(username).orElseThrow(() -> FdropException.notFound("no such user"));
+        if (to.kind() == UserKind.APPLICATION) {
+            throw FdropException.badRequest("application accounts cannot own folders");
+        }
         if (folders.member(f.id(), to.sub()).isEmpty()) {
             throw FdropException.badRequest("ownership can only pass to a member");
         }

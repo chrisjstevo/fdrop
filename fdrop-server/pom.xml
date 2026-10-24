@@ -114,6 +114,7 @@
         <groupId>com.google.cloud.tools</groupId>
         <artifactId>jib-maven-plugin</artifactId>
         <configuration>
+          <skip>false</skip>
           <from>
             <image>gcr.io/distroless/java21-debian12:nonroot</image>
           </from>
@@ -124,6 +125,8 @@
             <mainClass>io.fdrop.server.Main</mainClass>
             <ports>
               <port>8080</port>
+              <port>8443</port>
+              <port>8444</port>
               <port>8081</port>
               <port>2222</port>
             </ports>

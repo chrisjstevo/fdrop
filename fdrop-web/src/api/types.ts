@@ -1,6 +1,9 @@
+export type UserKind = "user" | "application";
+
 export interface Me {
   sub: string;
   username: string;
+  kind: UserKind;
   email?: string;
   roles: { standard: boolean; admin: boolean };
   quotaBytes: number;
@@ -75,6 +78,14 @@ export interface UploadSession {
 export interface MemberView {
   username: string;
   permission: "READ" | "WRITE";
+  /** USER for people, APPLICATION for application accounts. */
+  kind?: "USER" | "APPLICATION";
+}
+
+/** A user search result for the member picker. */
+export interface UserMatch {
+  username: string;
+  kind: UserKind;
 }
 
 export interface FolderView {
@@ -212,4 +223,52 @@ export interface TestResult {
   hostCertificate: boolean;
   hostCertificateCa?: string;
   error?: string;
+}
+
+export type AppMethod = "MTLS" | "PASSWORD" | "PUBLICKEY";
+
+export interface AppCertificate {
+  id: string;
+  match: "PINNED" | "SUBJECT";
+  sha256?: string;
+  subject?: string;
+  san?: string;
+  notAfter?: number;
+  state: "ACTIVE" | "RETIRED";
+  createdAt: number;
+}
+
+export interface AppSshKey {
+  id: string;
+  name: string;
+  type: string;
+  fingerprint: string;
+  createdAt: number;
+  lastUsedAt?: number;
+}
+
+export interface AppAccount {
+  id: string;
+  username: string;
+  description?: string;
+  responsible?: string;
+  enabled: boolean;
+  allowedMethods: AppMethod[];
+  allowedSources: string[];
+  passwordSetAt?: number;
+  passwordExpiresAt?: number;
+  certificates: AppCertificate[];
+  sshKeys: AppSshKey[];
+  /** The soonest password or active certificate expiry. */
+  nearestExpiry?: number;
+  lastLoginAt?: number;
+  createdAt: number;
+  usedBytes: number;
+  quotaBytes: number;
+}
+
+/** A new account or password; the password is shown once. */
+export interface AppCreated {
+  account: AppAccount;
+  password?: string;
 }

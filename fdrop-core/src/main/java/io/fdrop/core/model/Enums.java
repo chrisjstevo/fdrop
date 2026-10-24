@@ -28,4 +28,15 @@ public final class Enums {
     public enum ServerAuth { HOST_KEY, HOST_CA }
 
     public enum KeyState { ACTIVE, PENDING, RETIRED }
+
+    /** A person, or an application account for another system. */
+    public enum UserKind { USER, APPLICATION }
+
+    /** How an application account may sign in. */
+    public enum AppMethod { MTLS, PASSWORD, PUBLICKEY }
+
+    /** How a registered client certificate is matched: its fingerprint, or its subject or SAN from a trusted CA. */
+    public enum CertMatch { PINNED, SUBJECT }
+
+    public enum CertState { ACTIVE, RETIRED }
 }

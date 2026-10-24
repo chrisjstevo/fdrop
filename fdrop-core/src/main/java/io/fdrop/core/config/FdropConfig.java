@@ -31,6 +31,14 @@ public class FdropConfig {
         public List<String> trustedProxies = new ArrayList<>();
         /** Public base URL as browsers see it, used for redirects; defaults to http://localhost:{port}. */
         public String publicUrl;
+        public Mtls mtls = new Mtls();
+    }
+
+    /** The listener for application accounts with client certificates; uses the {@code http.tls} certificate. */
+    public static class Mtls {
+        public boolean enabled = false;
+        public int port = 8444;
+        public String bind = "0.0.0.0";
     }
 
     public static class Tls {
@@ -63,6 +71,33 @@ public class FdropConfig {
         public UserManagement userManagement = new UserManagement();
         public TwoFactor twoFactor = new TwoFactor();
         public Session session = new Session();
+        public Applications applications = new Applications();
+    }
+
+    public static class Applications {
+        /** Keycloak group whose members are application accounts; its role mapping is {@code oidc.appRole}. */
+        public String group = "fdrop-applications";
+        /** How long a generated password stays valid; {@code 0} means passwords never expire. */
+        public String passwordMaxAge = "365d";
+        /** Warn this long before a password or certificate expires. */
+        public List<String> expiryWarnings = new ArrayList<>(List.of("30d", "7d"));
+        /** Accept HTTP Basic on plain HTTP. Development only: production needs TLS or a trusted TLS proxy. */
+        public boolean basicWithoutTls = false;
+        public AppMtls mtls = new AppMtls();
+
+        public Duration passwordMaxAgeDuration() {
+            return passwordMaxAge == null || passwordMaxAge.isBlank() || passwordMaxAge.equals("0")
+                    ? Duration.ZERO : Durations.parse(passwordMaxAge);
+        }
+    }
+
+    public static class AppMtls {
+        /** PEM bundle of CAs that issue application client certificates; pinned certificates need none. */
+        public String trustedCas;
+        /** Optional CRL files or URLs; when set, by-subject certificates are checked for revocation. */
+        public List<String> crls = new ArrayList<>();
+        /** Header a TLS-terminating proxy puts the client certificate in, believed only from trusted proxies. */
+        public String proxyHeader;
     }
 
     public static class TwoFactor {
@@ -84,6 +119,7 @@ public class FdropConfig {
         public String apiAudience = "fdrop-api";
         public String userRole = "fdrop-user";
         public String adminRole = "fdrop-admin";
+        public String appRole = "fdrop-app";
     }
 
     public static class UserManagement {
@@ -151,5 +187,6 @@ public class FdropConfig {
     public static class Limits {
         public DataSize maxFileSize = DataSize.ofGiB(100);
         public DataSize defaultQuota = DataSize.ofGiB(50);
+        public DataSize defaultAppQuota = DataSize.ofGiB(10);
     }
 }

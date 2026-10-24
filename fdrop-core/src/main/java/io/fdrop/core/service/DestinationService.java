@@ -74,6 +74,9 @@ public final class DestinationService {
     // ---- standard users ----
 
     public List<UserView> forUser(Principal p) {
+        if (!p.isPerson()) {
+            return List.of(); // application accounts are never assigned destinations
+        }
         return repo.assignedTo(p.sub()).stream().filter(ForwardDestination::enabled)
                 .map(d -> new UserView(d.id(), d.name(), d.description())).toList();
     }
@@ -240,6 +243,9 @@ public final class DestinationService {
         find(id);
         User u = users.findByUsername(username).orElseThrow(() -> FdropException.notFound("no user '" + username
                 + "' (they must have logged in to fdrop once)"));
+        if (u.kind() == io.fdrop.core.model.Enums.UserKind.APPLICATION) {
+            throw FdropException.badRequest("application accounts are never assigned destinations");
+        }
         repo.assign(id, u.sub());
         for (Folder f : folders.usingDestination(id)) {
             if (f.ownerSub().equals(u.sub())) {
@@ -292,7 +298,7 @@ public final class DestinationService {
     }
 
     static void requireAdmin(Principal p) {
-        if (!p.admin()) {
+        if (!p.admin() || p.mixedRoles()) {
             throw FdropException.forbidden("admin role required");
         }
     }

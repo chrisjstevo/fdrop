@@ -1,8 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * End-to-end tests against a running stack (fdrop on 8080, Keycloak on 8180 with the dev realm), e.g. inside the
- * dev container after `java -jar fdrop-server/target/fdrop-server.jar`. Every test runs at phone, tablet and
+ * End-to-end tests against a running stack (fdrop on https://localhost:8443, Keycloak on 8180 with the dev realm),
+ * e.g. inside the dev container after `java -jar fdrop-server/target/fdrop-server.jar`. Every test runs at phone, tablet and
  * desktop sizes. Run with `npm run e2e`; set FDROP_URL to test another address.
  */
 export default defineConfig({
@@ -10,7 +10,9 @@ export default defineConfig({
   timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
   use: {
-    baseURL: process.env.FDROP_URL ?? "http://localhost:8080",
+    baseURL: process.env.FDROP_URL ?? "https://localhost:8443",
+    // the dev certificates come from a CA the test browsers do not know
+    ignoreHTTPSErrors: true,
     trace: "retain-on-failure",
   },
   projects: [

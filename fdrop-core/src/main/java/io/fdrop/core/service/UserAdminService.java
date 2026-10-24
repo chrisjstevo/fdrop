@@ -7,12 +7,14 @@ import io.fdrop.core.auth.Principal;
 import io.fdrop.core.auth.TwoFactorService;
 import io.fdrop.core.auth.UserStatusCache;
 import io.fdrop.core.config.FdropConfig;
+import io.fdrop.core.db.AppAccountRepo;
 import io.fdrop.core.db.DestinationRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
 import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
+import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.Folder;
 import io.fdrop.core.model.Records.UploadSession;
 import io.fdrop.core.model.Records.User;
@@ -58,12 +60,13 @@ public final class UserAdminService {
     private final RecordRepo records;
     private final StorageBackend storage;
     private final FolderService folderService;
+    private final AppAccountRepo appAccounts;
     private final List<SessionTerminator> terminators = new CopyOnWriteArrayList<>();
 
     public UserAdminService(FdropConfig cfg, KeycloakAdmin keycloak, UserStatusCache status,
                             TwoFactorService twoFactor, UserRepo users, FolderRepo folders,
                             DestinationRepo destinations, UploadRepo uploads, RecordRepo records,
-                            StorageBackend storage, FolderService folderService) {
+                            StorageBackend storage, FolderService folderService, AppAccountRepo appAccounts) {
         this.cfg = cfg;
         this.keycloak = keycloak;
         this.status = status;
@@ -75,6 +78,7 @@ public final class UserAdminService {
         this.records = records;
         this.storage = storage;
         this.folderService = folderService;
+        this.appAccounts = appAccounts;
     }
 
     public void addTerminator(SessionTerminator t) {
@@ -90,6 +94,10 @@ public final class UserAdminService {
         List<UserView> out = new ArrayList<>();
         for (KcUser u : keycloak.listUsers(search, first, Math.min(max, 100))) {
             List<String> roles = keycloak.realmRoles(u.id());
+            if (roles.contains(cfg.auth.oidc.appRole) && !roles.contains(cfg.auth.oidc.userRole)
+                    && !roles.contains(cfg.auth.oidc.adminRole)) {
+                continue; // application accounts have their own admin screen
+            }
             Optional<User> local = users.find(u.id());
             out.add(new UserView(u.id(), u.username(), u.email(), u.firstName(), u.lastName(), u.enabled(),
                     roles.contains(cfg.auth.oidc.adminRole), roles.contains(cfg.auth.oidc.userRole),
@@ -151,11 +159,21 @@ public final class UserAdminService {
         keycloak.deleteUser(id);
         status.invalidate(id);
 
-        users.upsert(admin.sub(), admin.username(), admin.email(), cfg.limits.defaultQuota.bytes());
+        users.upsert(admin.sub(), admin.username(), admin.email(), cfg.limits.defaultQuota.bytes(), UserKind.USER);
         for (Folder f : folders.ownedBy(id)) {
             folderService.transfer(f, admin.sub());
             folders.removeMember(f.id(), id);
         }
+        appAccounts.reassignResponsible(id, admin.sub());
+        purgeLocal(id, target.username());
+        Audit.log("user.delete", "user", admin.username(), "deleted", target.username());
+    }
+
+    /**
+     * Deletes everything fdrop holds for a user or application account: memberships, assignments, open uploads,
+     * upload history, home contents, keys and the user row. Owned folders must have been passed on first.
+     */
+    void purgeLocal(String id, String username) {
         folders.removeMemberships(id);
         destinations.removeAssignments(id);
         for (UploadSession s : uploads.openFor(id)) {
@@ -173,10 +191,9 @@ public final class UserAdminService {
         try {
             storage.delete(PathResolver.homeKey(id));
         } catch (IOException e) {
-            log.warn("could not delete home of {}: {}", target.username(), e.toString());
+            log.warn("could not delete home of {}: {}", username, e.toString());
         }
         users.delete(id);
-        Audit.log("user.delete", "user", admin.username(), "deleted", target.username());
     }
 
     /**
@@ -204,7 +221,8 @@ public final class UserAdminService {
         }
     }
 
-    private void endSessions(String id, String username) {
+    /** Ends a user's or application account's browser and SFTP sessions in this fdrop. */
+    public void endSessions(String id, String username) {
         for (SessionTerminator t : terminators) {
             try {
                 t.terminate(id);

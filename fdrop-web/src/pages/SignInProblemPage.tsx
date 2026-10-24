@@ -18,12 +18,22 @@ export function SignInProblemPage() {
           ? "Two-factor sign-in is required, but Keycloak did not confirm it. Ask your administrator."
           : reason === "two-factor-setup"
             ? "Your account must use two-factor sign-in, and no second factor was set up."
-            : "Sign-in could not be completed."}
+            : reason === "application"
+              ? "Application accounts cannot sign in to the web app."
+              : reason === "mixed-roles"
+                ? "This account is both an application account and a person's account, which fdrop does not allow. Ask your administrator."
+                : "Sign-in could not be completed."}
       </ErrorNote>
       {twoFactor && (
         <p className="muted">
           Your account must sign in with a second factor, such as a code from an authenticator app, but the sign-in
           service did not ask for one. This usually means its two-factor settings need fixing.
+        </p>
+      )}
+      {reason === "application" && (
+        <p className="muted">
+          Application accounts sign in to the API with a client certificate or their password, or to SFTP. Sign in with
+          your own account to use the web app.
         </p>
       )}
       {reason === "two-factor-setup" && (

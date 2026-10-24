@@ -6,6 +6,9 @@ http:
   tls: { enabled: true, cert: /etc/fdrop/tls.crt, key: /etc/fdrop/tls.key }
   simpleUploadMax: 64MiB
   trustedProxies: []    # CIDRs of reverse proxies / load balancers whose Forwarded, X-Forwarded-For and PROXY headers are believed
+  mtls:
+    enabled: false      # listener for application accounts with client certificates; uses the tls certificate above
+    port: 8444
 management:
   port: 8081
   bind: 0.0.0.0
@@ -28,6 +31,7 @@ auth:
     apiAudience: fdrop-api
     userRole: fdrop-user
     adminRole: fdrop-admin
+    appRole: fdrop-app
   userManagement:
     enabled: true        # false = admins see users read-only
   twoFactor:
@@ -35,6 +39,15 @@ auth:
     acr: 2fa             # the ACR value the fdrop-web client maps to level of authentication 2
     sftpPasswordWithCode: true   # false = users who need two factors use SSH keys only over SFTP
   session: { idle: 24h, absolute: 7d }
+  applications:
+    group: fdrop-applications   # Keycloak group whose members are application accounts (role mapping: appRole)
+    passwordMaxAge: 365d        # 0 = passwords never expire
+    expiryWarnings: [30d, 7d]   # log, audit and fdrop_app_credentials_expiring before a password or certificate expires
+    basicWithoutTls: false      # development only
+    mtls:
+      trustedCas: /etc/fdrop/app-client-ca.pem   # PEM bundle; pinned certificates need no CA
+      crls: []                  # optional CRL files or URLs
+      proxyHeader: null         # e.g. X-Forwarded-Client-Cert, believed only from http.trustedProxies
 forward:
   allowedHosts: []       # e.g. ["sftp.partner.example", "10.20.0.0/16"]; empty disables forward folders
   encryptionKey: ${FDROP_FORWARD_ENCRYPTIONKEY}   # 32-byte base64
@@ -64,3 +77,4 @@ db:
 limits:
   maxFileSize: 100GiB
   defaultQuota: 50GiB
+  defaultAppQuota: 10GiB

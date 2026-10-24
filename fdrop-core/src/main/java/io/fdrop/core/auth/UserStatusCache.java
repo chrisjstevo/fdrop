@@ -36,8 +36,7 @@ public class UserStatusCache {
         }
         Principal p = admin.getUser(sub).filter(KeycloakAdmin.KcUser::enabled).map(u -> {
             List<String> roles = admin.realmRoles(u.id());
-            return new Principal(u.id(), u.username(), u.email(), roles.contains(cfg.userRole),
-                    roles.contains(cfg.adminRole));
+            return Principal.of(u.id(), u.username(), u.email(), roles, cfg);
         }).orElse(null);
         cache.put(sub, new Entry(p, System.currentTimeMillis() + TTL.toMillis()));
         return Optional.ofNullable(p);

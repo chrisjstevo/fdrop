@@ -279,8 +279,8 @@ public class OidcClient {
     public Principal principal(JWTClaimsSet claims) {
         Set<String> roles = realmRoles(claims);
         try {
-            return new Principal(claims.getSubject(), claims.getStringClaim("preferred_username"),
-                    claims.getStringClaim("email"), roles.contains(cfg.userRole), roles.contains(cfg.adminRole));
+            return Principal.of(claims.getSubject(), claims.getStringClaim("preferred_username"),
+                    claims.getStringClaim("email"), roles, cfg);
         } catch (java.text.ParseException e) {
             throw FdropException.unauthorized("malformed token claims");
         }

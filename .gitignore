@@ -9,3 +9,6 @@ node_modules/
 .devcontainer/sftp-target/authorized_keys
 # never commit real configuration
 fdrop.yaml
+# dev certificates, created by scripts/dev-certs.sh when the Compose stacks start
+.devcontainer/certs/
+deploy/compose/certs/

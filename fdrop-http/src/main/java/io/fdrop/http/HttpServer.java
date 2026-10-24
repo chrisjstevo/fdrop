@@ -23,14 +23,18 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpServerExpectContinueHandler;
 import io.netty.handler.codec.http.HttpServerKeepAliveHandler;
+import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.net.ssl.X509TrustManager;
 import java.io.File;
 import java.net.InetSocketAddress;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -56,7 +60,9 @@ public final class HttpServer implements AutoCloseable {
     private EventLoopGroup boss;
     private EventLoopGroup workers;
     private Channel channel;
+    private Channel mtlsChannel;
     private volatile SslContext ssl;
+    private volatile SslContext mtlsSsl;
     private long certModified;
     private long keyModified;
 
@@ -88,16 +94,36 @@ public final class HttpServer implements AutoCloseable {
         return ((InetSocketAddress) channel.localAddress()).getPort();
     }
 
+    /** The application mTLS listener's port, or -1 when it is off. */
+    public int mtlsPort() {
+        return mtlsChannel == null ? -1 : ((InetSocketAddress) mtlsChannel.localAddress()).getPort();
+    }
+
     public HttpServer start() throws Exception {
         FdropConfig.Http cfg = app.config.http;
-        if (cfg.tls.enabled) {
+        if (cfg.tls.enabled || cfg.mtls.enabled) {
             reloadTls();
             tlsReloader.scheduleWithFixedDelay(this::reloadTlsQuietly, 60, 60, TimeUnit.SECONDS);
         }
         boss = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         workers = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
         new NettyAllocatorMetrics(PooledByteBufAllocator.DEFAULT).bindTo(app.metrics.registry());
-        ServerBootstrap b = new ServerBootstrap()
+        channel = bootstrap(false).bind(cfg.bind, cfg.port).sync().channel();
+        log.info("HTTP{} listening on {}:{}", cfg.tls.enabled ? "S" : "", cfg.bind, port());
+        if (cfg.mtls.enabled) {
+            mtlsChannel = bootstrap(true).bind(cfg.mtls.bind, cfg.mtls.port).sync().channel();
+            log.info("HTTPS for application client certificates listening on {}:{}", cfg.mtls.bind, mtlsPort());
+        }
+        return this;
+    }
+
+    /**
+     * The main listener, or the application listener: always TLS, client certificate required, API only. Its
+     * handshake accepts any client certificate; {@code AppAccountService} then decides whether a pinned
+     * fingerprint or a trusted CA and subject match, so an unknown certificate gets the same 401 as a wrong one.
+     */
+    private ServerBootstrap bootstrap(boolean mtls) {
+        return new ServerBootstrap()
                 .group(boss, workers)
                 .channel(NioServerSocketChannel.class)
                 .option(ChannelOption.SO_BACKLOG, 1024)
@@ -105,7 +131,7 @@ public final class HttpServer implements AutoCloseable {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        SslContext current = ssl;
+                        SslContext current = mtls ? mtlsSsl : ssl;
                         if (current != null) {
                             ch.pipeline().addLast("tls", current.newHandler(ch.alloc()));
                         }
@@ -115,12 +141,9 @@ public final class HttpServer implements AutoCloseable {
                         ch.pipeline().addLast("continue", new HttpServerExpectContinueHandler());
                         ch.pipeline().addLast("idle", new IdleStateHandler(0, 0, 120));
                         ch.pipeline().addLast("dispatch", new DispatchHandler(app, router, auth, writer, proxies,
-                                statics));
+                                statics, mtls));
                     }
                 });
-        channel = b.bind(cfg.bind, cfg.port).sync().channel();
-        log.info("HTTP{} listening on {}:{}", cfg.tls.enabled ? "S" : "", cfg.bind, port());
-        return this;
     }
 
     private void reloadTlsQuietly() {
@@ -137,10 +160,40 @@ public final class HttpServer implements AutoCloseable {
         if (ssl != null && cert.lastModified() == certModified && key.lastModified() == keyModified) {
             return;
         }
-        ssl = SslContextBuilder.forServer(cert, key).protocols("TLSv1.3", "TLSv1.2").build();
+        if (app.config.http.tls.enabled) {
+            ssl = SslContextBuilder.forServer(cert, key).protocols("TLSv1.3", "TLSv1.2").build();
+        }
+        if (app.config.http.mtls.enabled) {
+            mtlsSsl = SslContextBuilder.forServer(cert, key).protocols("TLSv1.3", "TLSv1.2")
+                    .clientAuth(ClientAuth.REQUIRE).trustManager(new AnyClientCertificate()).build();
+        }
         certModified = cert.lastModified();
         keyModified = key.lastModified();
         log.info("loaded TLS certificate {}", cert);
+    }
+
+    /**
+     * Completes the handshake for any client certificate the client proves it holds the key for; which ones are
+     * accepted is decided per request against the registered certificates. No CA list is sent, because clients
+     * such as Java's then refuse to offer a pinned self-signed certificate.
+     */
+    private final class AnyClientCertificate implements X509TrustManager {
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            if (chain == null || chain.length == 0) {
+                throw new CertificateException("a client certificate is required");
+            }
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            throw new CertificateException("not a client");
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return new X509Certificate[0];
+        }
     }
 
     /** Keeps {@code fdrop_http_connections_active} up to date. */
@@ -162,6 +215,9 @@ public final class HttpServer implements AutoCloseable {
     public void stop(Duration grace) {
         if (channel != null) {
             channel.close().syncUninterruptibly();
+        }
+        if (mtlsChannel != null) {
+            mtlsChannel.close().syncUninterruptibly();
         }
         tlsReloader.shutdownNow();
         if (workers != null) {

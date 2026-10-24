@@ -13,16 +13,22 @@ import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.handler.codec.http.QueryStringDecoder;
+import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.ReferenceCountUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.net.ssl.SSLPeerUnverifiedException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -41,6 +47,7 @@ final class DispatchHandler extends ChannelInboundHandlerAdapter {
     private final ResponseWriter writer;
     private final TrustedProxies proxies;
     private final StaticFiles statics;
+    private final boolean mtlsListener;
 
     private final ArrayDeque<Object> backlog = new ArrayDeque<>();
     private boolean inFlight;
@@ -54,7 +61,8 @@ final class DispatchHandler extends ChannelInboundHandlerAdapter {
     private long startNanos;
 
     DispatchHandler(Fdrop app, Router router, Authenticator auth, ResponseWriter writer, TrustedProxies proxies,
-                    StaticFiles statics) {
+                    StaticFiles statics, boolean mtlsListener) {
+        this.mtlsListener = mtlsListener;
         this.app = app;
         this.router = router;
         this.auth = auth;
@@ -96,7 +104,9 @@ final class DispatchHandler extends ChannelInboundHandlerAdapter {
             return;
         }
         QueryStringDecoder q = new QueryStringDecoder(req.uri());
-        match = router.match(req.method().name(), q.rawPath());
+        // the application listener serves the API only: no browser login, no UI
+        match = mtlsListener && !q.rawPath().startsWith("/api/v1/") ? null
+                : router.match(req.method().name(), q.rawPath());
         if (match != null && match.route().streaming()) {
             body = new BodyChannel(ctx.channel());
             Ctx c = context(ctx, req, q, null);
@@ -154,7 +164,9 @@ final class DispatchHandler extends ChannelInboundHandlerAdapter {
             Ctx cx = context(ctx, req, q, full);
             Thread.ofVirtual().name("http").start(() -> {
                 try {
-                    if (m == null) {
+                    if (m == null && mtlsListener) {
+                        finish(ctx, Problems.of(FdropException.notFound("no such API route")), "unmatched", false);
+                    } else if (m == null) {
                         finish(ctx, statics.serve(cx, router.pathExists(q.rawPath())), "static", false);
                     } else {
                         run(ctx, cx, m);
@@ -172,7 +184,24 @@ final class DispatchHandler extends ChannelInboundHandlerAdapter {
         String xff = req.headers().get("X-Forwarded-For");
         String ip = proxies.clientIp(peer.getAddress(), forwarded, xff);
         Map<String, String> params = match == null ? new LinkedHashMap<>() : match.params();
-        return new Ctx(req, q, params, ctx.channel(), ip, full, body);
+        return new Ctx(req, q, params, ctx.channel(), ip, full, body, connection(ctx, peer));
+    }
+
+    private Ctx.Connection connection(ChannelHandlerContext ctx, InetSocketAddress peer) {
+        SslHandler ssl = ctx.pipeline().get(SslHandler.class);
+        List<X509Certificate> certs = new ArrayList<>();
+        if (ssl != null) {
+            try {
+                for (Certificate c : ssl.engine().getSession().getPeerCertificates()) {
+                    if (c instanceof X509Certificate x) {
+                        certs.add(x);
+                    }
+                }
+            } catch (SSLPeerUnverifiedException e) {
+                // no client certificate
+            }
+        }
+        return new Ctx.Connection(ssl != null, mtlsListener, proxies.isTrusted(peer.getAddress()), List.copyOf(certs));
     }
 
     private void run(ChannelHandlerContext ctx, Ctx c, Router.Match m) {
@@ -276,7 +305,10 @@ final class DispatchHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        if (!(cause instanceof IOException)) {
+        if (cause.getCause() instanceof javax.net.ssl.SSLException) {
+            // failed handshakes, e.g. no client certificate on the mTLS listener, are the client's problem
+            log.debug("TLS handshake failed: {}", cause.getCause().toString());
+        } else if (!(cause instanceof IOException)) {
             log.warn("HTTP pipeline error: {}", cause.toString());
         }
         ctx.close();

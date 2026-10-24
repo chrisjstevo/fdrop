@@ -10,16 +10,23 @@ import io.fdrop.core.metrics.FdropMetrics;
 import java.net.URI;
 
 /**
- * An OIDC client for tests: bearer tokens are {@code user:<name>} or {@code admin:<name>}, with a {@code 2fa}
+ * An OIDC client for tests: bearer tokens are {@code user:<name>}, {@code admin:<name>} or {@code app:<name>}, with a {@code 2fa}
  * suffix on the kind ({@code admin2fa:<name>}) for a token Keycloak issued after a second factor; SFTP passwords
- * equal the username, and one-time codes are {@code 123456}. Browser logins go to {@code http://keycloak.test},
+ * equal the username (usernames starting {@code app} are application accounts), and one-time codes are {@code 123456}. Browser logins go to {@code http://keycloak.test},
  * and an authorization code is {@code <kind>:<name>}, with {@code :2fa} appended when the second factor was used.
  * Keycloak is never contacted.
  */
 public class FakeOidc extends OidcClient {
 
+    private java.util.function.Function<String, String> passwords = u -> null;
+
     public FakeOidc(FdropConfig.Oidc cfg, FdropMetrics metrics) {
         super(cfg, metrics);
+    }
+
+    /** Passwords fdrop set (for application accounts) replace the username-as-password rule. */
+    public void usePasswords(java.util.function.Function<String, String> passwords) {
+        this.passwords = passwords;
     }
 
     @Override
@@ -33,6 +40,8 @@ public class FakeOidc extends OidcClient {
         Principal p = switch (kind) {
             case "user" -> TestSupport.user(parts[1]);
             case "admin" -> TestSupport.admin(parts[1]);
+            case "app" -> TestSupport.app(parts[1]);
+            case "mixed" -> new Principal("sub-" + parts[1], parts[1], null, true, false, true);
             case "nobody" -> new Principal("sub-" + parts[1], parts[1], null, false, false);
             default -> throw FdropException.unauthorized("invalid token");
         };
@@ -42,13 +51,14 @@ public class FakeOidc extends OidcClient {
     /** Codes are only accepted from users who have one (see {@link FakeDirectory}). */
     @Override
     public Principal passwordLogin(String username, String password, String totp) {
-        if (!username.equals(password)) {
+        String set = passwords.apply(username);
+        if (!(set == null ? username : set).equals(password)) {
             return null;
         }
         if (totp != null && !totp.equals("123456")) {
             return null;
         }
-        return username.startsWith("admin") ? TestSupport.admin(username) : TestSupport.user(username);
+        return TestSupport.byName(username);
     }
 
     @Override
@@ -61,7 +71,11 @@ public class FakeOidc extends OidcClient {
     @Override
     public Tokens exchangeCode(String code, CodeVerifier verifier, URI redirect, String expectedNonce) {
         String[] parts = code.split(":");
-        Principal p = parts[0].equals("admin") ? TestSupport.admin(parts[1]) : TestSupport.user(parts[1]);
+        Principal p = switch (parts[0]) {
+            case "admin" -> TestSupport.admin(parts[1]);
+            case "app" -> TestSupport.app(parts[1]);
+            default -> TestSupport.user(parts[1]);
+        };
         boolean twoFactor = parts.length > 2 && parts[2].equals("2fa");
         return new Tokens("id-" + parts[1], "access-" + parts[1], "refresh-" + parts[1],
                 System.currentTimeMillis() + 3_600_000, p, "sid-" + parts[1], twoFactor ? "2fa" : "1");

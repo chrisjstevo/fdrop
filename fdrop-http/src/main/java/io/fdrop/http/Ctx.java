@@ -29,12 +29,32 @@ public final class Ctx {
     private final String clientIp;
     private final ByteBuf body;
     private final BodyChannel bodyChannel;
+    private final Connection connection;
     Principal principal;
     SessionStore.WebSession session;
     boolean twoFactor;
 
+    /**
+     * How the request arrived.
+     *
+     * @param tls           the connection itself is TLS
+     * @param mtlsListener  it came in on the application mTLS listener
+     * @param trustedPeer   the peer is one of {@code http.trustedProxies}
+     * @param clientCerts   the client's certificate chain from the TLS handshake, leaf first; empty if none
+     */
+    record Connection(boolean tls, boolean mtlsListener, boolean trustedPeer,
+                      List<java.security.cert.X509Certificate> clientCerts) {
+        static final Connection PLAIN = new Connection(false, false, false, List.of());
+    }
+
     Ctx(HttpRequest request, QueryStringDecoder query, Map<String, String> pathParams, Channel channel,
         String clientIp, ByteBuf body, BodyChannel bodyChannel) {
+        this(request, query, pathParams, channel, clientIp, body, bodyChannel, Connection.PLAIN);
+    }
+
+    Ctx(HttpRequest request, QueryStringDecoder query, Map<String, String> pathParams, Channel channel,
+        String clientIp, ByteBuf body, BodyChannel bodyChannel, Connection connection) {
+        this.connection = connection;
         this.request = request;
         this.query = query;
         this.pathParams = pathParams;
@@ -66,6 +86,27 @@ public final class Ctx {
 
     public Channel channel() {
         return channel;
+    }
+
+    Connection connection() {
+        return connection;
+    }
+
+    /**
+     * True when the client's connection was encrypted: TLS here, or TLS a trusted proxy terminated and reported
+     * with {@code X-Forwarded-Proto} or {@code Forwarded: proto=https}.
+     */
+    boolean secure() {
+        if (connection.tls()) {
+            return true;
+        }
+        if (!connection.trustedPeer()) {
+            return false;
+        }
+        String xfp = header("X-Forwarded-Proto");
+        String fwd = header("Forwarded");
+        return (xfp != null && xfp.trim().equalsIgnoreCase("https"))
+                || (fwd != null && fwd.toLowerCase(java.util.Locale.ROOT).contains("proto=https"));
     }
 
     public String param(String name) {

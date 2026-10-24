@@ -11,6 +11,7 @@ import { ProgressBar } from "./ui";
 const me = (over: Partial<Me> = {}): Me => ({
   sub: "s",
   username: "alice",
+  kind: "user",
   roles: { standard: true, admin: false },
   quotaBytes: 1000,
   usedBytes: 600,

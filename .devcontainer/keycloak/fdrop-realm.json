@@ -31,9 +31,22 @@
       {
         "name": "fdrop-admin",
         "description": "fdrop admin: users and forward destinations"
+      },
+      {
+        "name": "fdrop-app",
+        "description": "Application account: another system exchanging files, through the fdrop-applications group"
       }
     ]
   },
+  "groups": [
+    {
+      "name": "fdrop-applications",
+      "path": "/fdrop-applications",
+      "realmRoles": [
+        "fdrop-app"
+      ]
+    }
+  ],
   "clients": [
     {
       "clientId": "fdrop-web",
@@ -49,17 +62,17 @@
       "serviceAccountsEnabled": false,
       "frontchannelLogout": false,
       "redirectUris": [
-        "http://localhost:8080/auth/callback",
-        "http://localhost:5173/auth/callback"
+        "https://localhost:8443/auth/callback",
+        "https://localhost:5173/auth/callback"
       ],
       "webOrigins": [
-        "http://localhost:8080",
-        "http://localhost:5173"
+        "https://localhost:8443",
+        "https://localhost:5173"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:8080/##http://localhost:5173/",
-        "backchannel.logout.url": "http://localhost:8080/auth/backchannel-logout",
+        "post.logout.redirect.uris": "https://localhost:8443/##https://localhost:5173/",
+        "backchannel.logout.url": "https://localhost:8443/auth/backchannel-logout",
         "backchannel.logout.session.required": "true",
         "backchannel.logout.revoke.offline.tokens": "false",
         "acr.loa.map": "{\"2fa\":\"2\"}"
@@ -147,6 +160,24 @@
       ]
     },
     {
+      "username": "app-demo",
+      "enabled": true,
+      "email": "app-demo@applications.invalid",
+      "emailVerified": true,
+      "firstName": "app-demo",
+      "lastName": "Application account",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "app-demo",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/fdrop-applications"
+      ]
+    },
+    {
       "username": "service-account-fdrop-sftp",
       "enabled": true,
       "serviceAccountClientId": "fdrop-sftp",
@@ -154,7 +185,8 @@
         "realm-management": [
           "view-users",
           "query-users",
-          "manage-users"
+          "manage-users",
+          "query-groups"
         ]
       }
     }
