@@ -3,6 +3,7 @@ package io.fdrop.core.model;
 import io.fdrop.core.model.Enums.AppMethod;
 import io.fdrop.core.model.Enums.CertMatch;
 import io.fdrop.core.model.Enums.CertState;
+import io.fdrop.core.model.Enums.ExpirySource;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.KeyState;
@@ -76,7 +77,7 @@ public final class Records {
                                 WentTo wentTo, String fileName, long size, long chunkSize, int chunkCount,
                                 String sha256, UploadState state, String backendUploadId, boolean overwrite,
                                 String startIp, Long lastModified, String error, long createdAt, long updatedAt,
-                                long expiresAt) {
+                                long expiresAt, String expiresIn) {
     }
 
     public record UploadChunk(String sessionId, int idx, long size, String sha256, String etag, long receivedAt) {
@@ -84,7 +85,18 @@ public final class Records {
 
     public record UploadRecord(String id, String userSub, String fileName, long size, WentTo wentTo,
                                String folderId, String pathAtUpload, String currentPath, String storageKey,
-                               RecordStatus status, Via via, String clientIp, String startIp, long completedAt) {
+                               RecordStatus status, Via via, String clientIp, String startIp, long completedAt,
+                               Long expiresAt) {
+    }
+
+    /**
+     * A file's expiry. {@code userSub} is the home's owner for files under {@code /home}, {@code folderId} the
+     * managed folder otherwise; {@code expiresIn} is the canonical text it was set with, or null for a date.
+     */
+    public record FileExpiry(String id, String storageKey, String parentKey, String userSub, String folderId,
+                             long expiresAt, String expiresIn, ExpirySource source, String setBySub, Via setVia,
+                             long setAt, String uploadRecordId, int attempts, String lastError,
+                             long nextAttemptAt) {
     }
 
     public record ForwardJob(String id, String folderId, String destinationId, String uploadRecordId,

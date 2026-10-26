@@ -53,7 +53,7 @@ public final class UploadRecorder {
         UploadRecord rec = new UploadRecord(Hashing.newId("rec"), p.sub(), vp.name(), info.size(), wentTo,
                 vp.folder() == null ? null : vp.folder().id(), vp.virtual(), vp.virtual(), info.path().toString(),
                 wentTo == WentTo.FORWARD ? RecordStatus.QUEUED : RecordStatus.STORED, via, clientIp,
-                startIp == null ? clientIp : startIp, now);
+                startIp == null ? clientIp : startIp, now, null);
         boolean queued = db.inTransaction(() -> {
             records.insert(rec);
             if (wentTo == WentTo.FORWARD) {

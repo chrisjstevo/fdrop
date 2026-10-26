@@ -19,6 +19,7 @@ const RECORD: Record<string, { label: string; kind: "ok" | "neutral" | "warn" | 
   STORED: { label: "Stored", kind: "ok" },
   MOVED: { label: "Moved", kind: "neutral" },
   DELETED: { label: "Deleted", kind: "neutral" },
+  EXPIRED: { label: "Expired", kind: "neutral" },
   ...Object.fromEntries(Object.entries(JOB)),
 };
 

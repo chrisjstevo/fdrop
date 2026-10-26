@@ -21,7 +21,7 @@ public final class Enums {
      * Status of an {@code upload_record}. Folder uploads use STORED, MOVED, DELETED; forward uploads mirror their
      * forward job's state.
      */
-    public enum RecordStatus { STORED, MOVED, DELETED, QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED }
+    public enum RecordStatus { STORED, MOVED, DELETED, EXPIRED, QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED }
 
     public enum JobState { QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED }
 
@@ -39,4 +39,7 @@ public final class Enums {
     public enum CertMatch { PINNED, SUBJECT }
 
     public enum CertState { ACTIVE, RETIRED }
+
+    /** Where a file's expiry came from. */
+    public enum ExpirySource { UPLOAD, FOLDER_DEFAULT, HOME_DEFAULT, CHANGED, FORWARD_KEEP }
 }

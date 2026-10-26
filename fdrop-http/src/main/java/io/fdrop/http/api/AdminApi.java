@@ -10,6 +10,7 @@ import io.fdrop.core.service.AppAccountService;
 import io.fdrop.core.service.DestinationService;
 import io.fdrop.core.service.UserAdminService;
 import io.fdrop.http.Ctx;
+import io.fdrop.http.Json;
 import io.fdrop.http.Response;
 import io.fdrop.http.Router;
 
@@ -50,14 +51,19 @@ public final class AdminApi {
                     FilesApi.text(b, "username"), opt(b, "description"), opt(b, "responsible"), methods(b),
                     strings(b, "allowedSources"))));
         });
-        r.get("/api/v1/admin/app-accounts/{id}", ctx -> Response.json(
-                app.appAccounts.get(ctx.principal(), ctx.param("id"))));
+        r.get("/api/v1/admin/app-accounts/{id}", ctx -> Response.json(withHomeExpiry(ctx.param("id"),
+                app.appAccounts.get(ctx.principal(), ctx.param("id")))));
         r.patch("/api/v1/admin/app-accounts/{id}", ctx -> {
             JsonNode b = ctx.jsonTree();
-            return Response.json(app.appAccounts.update(ctx.principal(), ctx.param("id"),
+            AppAccountService.AppView v = app.appAccounts.update(ctx.principal(), ctx.param("id"),
                     new AppAccountService.UpdateInput(opt(b, "description"), opt(b, "responsible"), methods(b),
                             strings(b, "allowedSources"), b.hasNonNull("enabled") ? b.get("enabled").asBoolean()
-                            : null)));
+                            : null));
+            if (b.has("homeDefaultExpiry")) {
+                app.expiry.setHomeDefault(ctx.principal(), ctx.param("id"), b.get("homeDefaultExpiry").isNull() ? ""
+                        : b.get("homeDefaultExpiry").asText());
+            }
+            return Response.json(withHomeExpiry(ctx.param("id"), v));
         });
         r.delete("/api/v1/admin/app-accounts/{id}", ctx -> {
             app.appAccounts.delete(ctx.principal(), ctx.param("id"));
@@ -112,6 +118,14 @@ public final class AdminApi {
         UserAdminService.Created c = app.userAdmin.create(ctx.principal(), FilesApi.text(b, "username"),
                 opt(b, "email"), opt(b, "firstName"), opt(b, "lastName"), b.path("admin").asBoolean(false));
         return Response.json(201, c);
+    }
+
+    /** An application account's view plus its home default expiry, which lives with the file settings. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> withHomeExpiry(String sub, AppAccountService.AppView v) {
+        Map<String, Object> m = Json.MAPPER.convertValue(v, java.util.LinkedHashMap.class);
+        m.put("homeDefaultExpiry", app.expiry.homeDefault(sub));
+        return m;
     }
 
     private Response probe(Ctx ctx) {

@@ -109,10 +109,28 @@ public final class FdropFileSystemProvider extends FileSystemProvider {
         throw new UnsupportedOperationException();
     }
 
+    /** True for {@code <name>.fdrop-expires}, the SFTP expiry control file of {@code <name>}. */
+    private boolean isControl(String virtual) {
+        int slash = virtual.lastIndexOf('/');
+        return files.expiry().isControlName(virtual.substring(slash + 1));
+    }
+
     FileService.Entry entry(Path path) throws IOException {
         FdropPath fp = p(path);
         if (fp.listed != null) {
             return fp.listed;
+        }
+        if (isControl(fp.virtual())) {
+            String v = fp.virtual();
+            try {
+                String text = files.expiry().controlPeek(fs(path).principal, files.expiry().controlTarget(v))
+                        .orElseThrow(() -> new NoSuchFileException(v));
+                return new FileService.Entry(v.substring(v.lastIndexOf('/') + 1), v, FileService.EntryType.FILE,
+                        text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                        System.currentTimeMillis(), true, null);
+            } catch (FdropException e) {
+                throw toIo(e, v);
+            }
         }
         try {
             return files.stat(fs(path).principal, fp.virtual());
@@ -130,6 +148,9 @@ public final class FdropFileSystemProvider extends FileSystemProvider {
         FdropFileSystem fs = fs(path);
         String v = fp.virtual();
         boolean write = options.contains(StandardOpenOption.WRITE) || options.contains(StandardOpenOption.APPEND);
+        if (isControl(v)) {
+            return controlChannel(fs, v, write);
+        }
         try {
             if (!write) {
                 return new ReadChannel(files, files.readTarget(fs.principal, v), metrics);
@@ -161,6 +182,35 @@ public final class FdropFileSystemProvider extends FileSystemProvider {
         } catch (FdropException e) {
             throw toIo(e, v);
         }
+    }
+
+    private SeekableByteChannel controlChannel(FdropFileSystem fs, String v, boolean write) throws IOException {
+        String target = files.expiry().controlTarget(v);
+        try {
+            if (!write) {
+                return ControlChannel.forReading(files.expiry().controlRead(fs.principal, target));
+            }
+            files.resolver().resolve(fs.principal, target);
+        } catch (FdropException e) {
+            throw toIo(e, v);
+        }
+        return ControlChannel.forWriting(text -> {
+            try {
+                files.expiry().controlWrite(fs.principal, target, text);
+            } catch (FdropException e) {
+                throw controlFailure(e, v);
+            }
+        });
+    }
+
+    /** A refused control value fails the close with the reason, which SFTP clients print. */
+    private static IOException controlFailure(FdropException e, String v) {
+        if (e.status() == 400) {
+            FileSystemException fse = new FileSystemException(v, null, e.getMessage());
+            fse.initCause(e);
+            return fse;
+        }
+        return toIo(e, v);
     }
 
     @Override
@@ -218,6 +268,10 @@ public final class FdropFileSystemProvider extends FileSystemProvider {
     public void delete(Path path) throws IOException {
         FdropPath fp = p(path);
         try {
+            if (isControl(fp.virtual())) {
+                files.expiry().controlClear(fs(path).principal, files.expiry().controlTarget(fp.virtual()));
+                return;
+            }
             files.delete(fs(path).principal, fp.virtual(), false);
         } catch (FdropException e) {
             throw toIo(e, fp.virtual());
@@ -254,6 +308,13 @@ public final class FdropFileSystemProvider extends FileSystemProvider {
         FdropFileSystem fs = fs(source);
         String from = p(source).virtual();
         String to = p(target).virtual();
+        if (isControl(from)) {
+            throw new FileSystemException(from, to, "expiry control files cannot be renamed");
+        }
+        if (isControl(to)) {
+            renameOntoControl(fs, from, to);
+            return;
+        }
         try {
             if (List.of(options).contains(StandardCopyOption.REPLACE_EXISTING)) {
                 Optional<FileService.Entry> existing = files.statIfExists(fs.principal, to);
@@ -264,6 +325,37 @@ public final class FdropFileSystemProvider extends FileSystemProvider {
             files.move(fs.principal, from, to);
         } catch (FdropException e) {
             throw toIo(e, from);
+        }
+        try {
+            files.expiry().applyPendingAfterRename(fs.principal, to);
+        } catch (FdropException e) {
+            throw controlFailure(e, to);
+        }
+    }
+
+    /**
+     * A client that uploads to a temporary name (WinSCP's {@code .filepart}) and renames it onto a control file name:
+     * the temporary file's text is the control value, and the temporary file goes away.
+     */
+    private void renameOntoControl(FdropFileSystem fs, String from, String to) throws IOException {
+        String text;
+        try {
+            FileService.ReadTarget src = files.readTarget(fs.principal, from);
+            if (src.info().size() > ControlChannel.MAX_BYTES) {
+                throw new FileSystemException(from, to, "expiry control files hold at most " + ControlChannel.MAX_BYTES
+                        + " bytes");
+            }
+            ByteBuffer buf = ByteBuffer.allocate(ControlChannel.MAX_BYTES);
+            try (ReadableByteChannel in = files.openRead(src, 0, -1)) {
+                while (buf.hasRemaining() && in.read(buf) >= 0) {
+                    // read the whole (small) file
+                }
+            }
+            text = new String(buf.array(), 0, buf.position(), java.nio.charset.StandardCharsets.UTF_8);
+            files.expiry().controlWrite(fs.principal, files.expiry().controlTarget(to), text);
+            files.delete(fs.principal, from, false);
+        } catch (FdropException e) {
+            throw controlFailure(e, to);
         }
     }
 

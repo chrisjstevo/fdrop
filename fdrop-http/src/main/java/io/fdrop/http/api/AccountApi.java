@@ -34,6 +34,7 @@ public final class AccountApi {
 
     public void register(Router r) {
         r.get("/api/v1/me", this::me);
+        r.patch("/api/v1/me", this::updateMe);
         r.get("/api/v1/me/ssh-keys", ctx -> Response.json(app.accounts.keys(ctx.principal()).stream()
                 .map(AccountApi::key).toList()));
         r.post("/api/v1/me/ssh-keys", this::addKey);
@@ -69,6 +70,7 @@ public final class AccountApi {
             m.put("csrfToken", ctx.session().csrf());
         }
         m.put("twoFactor", twoFactor(ctx));
+        m.put("expiry", expiry(p));
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("simpleUploadMax", app.config.http.simpleUploadMax.bytes());
         settings.put("maxFileSize", app.config.limits.maxFileSize.bytes());
@@ -79,6 +81,32 @@ public final class AccountApi {
         settings.put("sftpPort", app.config.sftp.enabled ? app.config.sftp.port : null);
         m.put("settings", settings);
         return Response.json(m);
+    }
+
+    private Map<String, Object> expiry(Principal p) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        var server = app.expiry.homeServerSettings();
+        m.put("enabled", app.expiry.enabled());
+        m.put("homeDefault", app.expiry.homeDefault(p.sub()));
+        m.put("serverHomeDefault", server.defaultExpiry());
+        m.put("homeMax", server.maxExpiry());
+        m.put("serverMax", app.expiry.serverMax().canonical());
+        return m;
+    }
+
+    /** {@code PATCH /api/v1/me}: the user's own settings; today only {@code homeDefaultExpiry}. */
+    private Response updateMe(Ctx ctx) {
+        JsonNode b = ctx.jsonTree();
+        if (b.has("homeDefaultExpiry")) {
+            Principal p = ctx.principal();
+            if (!p.isPerson()) {
+                throw FdropException.forbidden("an administrator sets an application account's home default");
+            }
+            app.accounts.me(p);
+            app.expiry.setHomeDefault(p, p.sub(), b.get("homeDefaultExpiry").isNull() ? ""
+                    : b.get("homeDefaultExpiry").asText());
+        }
+        return me(ctx);
     }
 
     private Map<String, Object> twoFactor(Ctx ctx) {
@@ -186,6 +214,7 @@ public final class AccountApi {
         m.put("clientIp", r.clientIp());
         m.put("startIp", r.startIp() != null && !r.startIp().equals(r.clientIp()) ? r.startIp() : null);
         m.put("completedAt", Instant.ofEpochMilli(r.completedAt()).toString());
+        m.put("expiresAt", r.expiresAt() == null ? null : Instant.ofEpochMilli(r.expiresAt()).toString());
         m.put("canDownload", h.reachable() && (r.status().name().equals("STORED") || r.status().name().equals("MOVED")
                 || r.wentTo() == WentTo.FORWARD));
         m.put("canRetry", h.canRetry());

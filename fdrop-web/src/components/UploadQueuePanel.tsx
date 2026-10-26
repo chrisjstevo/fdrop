@@ -91,6 +91,7 @@ export function UploadQueuePanel() {
                 <span>
                   {formatBytes(Math.min(i.sent, i.size))} of {formatBytes(i.size)}
                 </span>
+                {i.expiresIn && <span>{i.expiresIn === "never" ? "Never expires" : `Expires ${i.expiresIn} after upload`}</span>}
                 {i.state === "uploading" && i.speed > 0 && (
                   <span>
                     {formatSpeed(i.speed)} · {formatDuration(i.secondsLeft)} left

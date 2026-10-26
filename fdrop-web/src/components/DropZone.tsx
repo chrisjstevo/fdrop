@@ -3,6 +3,7 @@ import { ApiError, post } from "../api/client";
 import type { Me } from "../api/types";
 import { useMe } from "../auth/useMe";
 import { useUploadQueue } from "../upload/UploadContext";
+import { UploadIcon } from "./icons";
 import { formatBytes, join } from "../util/format";
 import s from "./DropZone.module.css";
 
@@ -111,9 +112,15 @@ export function DropTarget({
   filesOnly,
   disabled,
   disabledReason,
+  expiresIn,
+  chooseRef,
   children,
 }: {
   targetPath: string;
+  /** Receives the function that opens the file picker, for an Upload button elsewhere on the page. */
+  chooseRef?: { current: (() => void) | undefined };
+  /** The expiry chosen for files dropped now; undefined for the folder's default. */
+  expiresIn?: string;
   label: string;
   filesOnly?: boolean;
   disabled?: boolean;
@@ -157,11 +164,11 @@ export function DropTarget({
       const okSet = new Set(ok);
       for (const { file, rel } of c.files) {
         if (okSet.has(file)) {
-          queue.add(file, join(dest, rel));
+          queue.add(file, join(dest, rel), { expiresIn });
         }
       }
     },
-    [filesOnly, me.data, queue],
+    [filesOnly, me.data, queue, expiresIn],
   );
 
   const pathFor = (target: EventTarget | null) => {
@@ -208,6 +215,9 @@ export function DropTarget({
   };
 
   const choose = () => input.current?.click();
+  if (chooseRef) {
+    chooseRef.current = disabled ? undefined : choose;
+  }
 
   return (
     <div
@@ -218,15 +228,17 @@ export function DropTarget({
       onDragLeave={onDragLeave}
       onDrop={(e) => void onDrop(e)}
     >
+      {disabled && disabledReason && <p className={s.disabled}>{disabledReason}</p>}
+      {children}
       {!disabled && (
         <button type="button" className={[s.zone, over ? s.zoneOver : ""].join(" ")} onClick={choose}>
           <span className={s.mark} aria-hidden="true" />
+          <UploadIcon size={18} />
           <span className={s.text}>
             {over ? `Drop to upload to ${overPath}` : touchOnly ? "Tap to choose files" : label}
           </span>
         </button>
       )}
-      {disabled && disabledReason && <p className={s.disabled}>{disabledReason}</p>}
       <input
         ref={input}
         type="file"
@@ -256,7 +268,6 @@ export function DropTarget({
           </button>
         </div>
       )}
-      {children}
     </div>
   );
 }

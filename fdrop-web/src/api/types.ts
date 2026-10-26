@@ -11,6 +11,7 @@ export interface Me {
   reservedBytes: number;
   csrfToken?: string;
   twoFactor: TwoFactorStatus;
+  expiry: ExpirySettings;
   settings: {
     simpleUploadMax: number;
     maxFileSize: number;
@@ -20,6 +21,18 @@ export interface Me {
     forwarding: boolean;
     sftpPort?: number;
   };
+}
+
+/** File expiry settings for the signed-in user; expiries are canonical text such as "30 days". */
+export interface ExpirySettings {
+  enabled: boolean;
+  /** The user's own default for files in Home. */
+  homeDefault?: string;
+  /** The server's default for Home when the user has none. */
+  serverHomeDefault?: string;
+  /** The longest expiry allowed in Home; when set, every Home file expires. */
+  homeMax?: string;
+  serverMax: string;
 }
 
 export interface SecondFactor {
@@ -53,12 +66,28 @@ export interface Entry {
   modified?: string;
   writable: boolean;
   folderId?: string;
+  /** When the file is deleted automatically, if it has an expiry. */
+  expiresAt?: string;
+  /** The expiry it was given ("6 days"); absent for a date. */
+  expiresIn?: string;
+  expirySource?: "upload" | "folderDefault" | "homeDefault" | "changed" | "forwardKeep";
+}
+
+/** What an upload into a folder gets. */
+export interface FolderExpiry {
+  enabled: boolean;
+  /** False in forward folders, which keep files by their "After sending" setting. */
+  allowed: boolean;
+  default?: string;
+  max?: string;
+  serverMax: string;
 }
 
 export interface Listing {
   path: string;
   self: Entry;
   entries: Entry[];
+  folderExpiry?: FolderExpiry;
 }
 
 export interface UploadSession {
@@ -69,6 +98,8 @@ export interface UploadSession {
   chunkCount: number;
   state: "OPEN" | "ASSEMBLING" | "COMPLETED" | "ABORTED" | "EXPIRED" | "FAILED";
   expiresAt: string;
+  /** The expiry the file will get when the upload completes. */
+  fileExpiresIn?: string;
   error?: string;
   received?: [number, number][];
   bytesReceived?: number;
@@ -101,6 +132,8 @@ export interface FolderView {
   paused: boolean;
   members: MemberView[];
   createdAt: number;
+  defaultExpiry?: string;
+  maxExpiry?: string;
 }
 
 export type JobState = "QUEUED" | "SENDING" | "RETRY_WAIT" | "SENT" | "FAILED" | "PAUSED";
@@ -137,6 +170,8 @@ export interface HistoryRow {
   clientIp?: string;
   startIp?: string;
   completedAt: string;
+  /** The expiry recorded for the upload. */
+  expiresAt?: string;
   canDownload: boolean;
   canRetry: boolean;
   jobId?: string;
@@ -265,6 +300,7 @@ export interface AppAccount {
   createdAt: number;
   usedBytes: number;
   quotaBytes: number;
+  homeDefaultExpiry?: string;
 }
 
 /** A new account or password; the password is shown once. */

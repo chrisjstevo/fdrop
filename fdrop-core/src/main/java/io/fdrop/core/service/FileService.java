@@ -9,11 +9,14 @@ import io.fdrop.core.db.RecordRepo;
 import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
+import io.fdrop.core.model.Enums.ExpirySource;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.Via;
+import io.fdrop.core.model.Records.FileExpiry;
 import io.fdrop.core.model.Records.Folder;
 import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardDestination;
+import io.fdrop.core.model.Records.UploadRecord;
 import io.fdrop.core.model.Records.User;
 import io.fdrop.core.service.VirtualPath.Kind;
 import io.fdrop.core.storage.ObjectInfo;
@@ -30,6 +33,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -41,12 +45,25 @@ public final class FileService {
 
     public enum EntryType { AREA, DIR, FILE, SHARED_FOLDER, FORWARD_FOLDER }
 
-    /** One listing row as both protocols show it. */
+    /**
+     * One listing row as both protocols show it. {@code expiresAt} (epoch millis), {@code expiresIn} and
+     * {@code expirySource} are set for files that have an expiry.
+     */
     public record Entry(String name, String path, EntryType type, long size, long modified, boolean writable,
-                        String folderId) {
+                        String folderId, Long expiresAt, String expiresIn, ExpirySource expirySource) {
+
+        public Entry(String name, String path, EntryType type, long size, long modified, boolean writable,
+                     String folderId) {
+            this(name, path, type, size, modified, writable, folderId, null, null, null);
+        }
+
         public boolean directory() {
             return type != EntryType.FILE;
         }
+    }
+
+    /** The result of a move: the entry at its new place, and whether its expiry was shortened to fit there. */
+    public record Moved(Entry entry, boolean expiryShortened) {
     }
 
     private final FdropConfig cfg;
@@ -58,10 +75,11 @@ public final class FileService {
     private final UploadRepo uploads;
     private final RecordRepo records;
     private final UploadRecorder recorder;
+    private final ExpiryService expiry;
 
     public FileService(FdropConfig cfg, StorageBackend storage, PathResolver resolver, UserRepo users,
                        FolderRepo folders, DestinationRepo destinations, UploadRepo uploads, RecordRepo records,
-                       UploadRecorder recorder) {
+                       UploadRecorder recorder, ExpiryService expiry) {
         this.cfg = cfg;
         this.storage = storage;
         this.resolver = resolver;
@@ -71,6 +89,11 @@ public final class FileService {
         this.uploads = uploads;
         this.records = records;
         this.recorder = recorder;
+        this.expiry = expiry;
+    }
+
+    public ExpiryService expiry() {
+        return expiry;
     }
 
     public PathResolver resolver() {
@@ -114,8 +137,14 @@ public final class FileService {
                     if (self.isEmpty()) {
                         yield out;
                     }
+                    Map<String, FileExpiry> expiries = expiry.children(vp.key());
                     try (Stream<ObjectInfo> s = storage.list(vp.key(), false)) {
-                        s.forEach(o -> out.add(entry(vp, o)));
+                        s.forEach(o -> {
+                            FileExpiry fe = o.directory() ? null : expiries.get(o.path().toString());
+                            if (!expiry.expired(fe)) {
+                                out.add(entry(vp, o, fe));
+                            }
+                        });
                     }
                     out.sort(Comparator.comparing((Entry e) -> !e.directory()).thenComparing(e -> e.name().toLowerCase()));
                     yield out;
@@ -146,7 +175,11 @@ public final class FileService {
                     }
                     ObjectInfo o = storage.stat(vp.key())
                             .orElseThrow(() -> FdropException.notFound("no such file: " + vp.virtual()));
-                    yield entry(vp, o);
+                    FileExpiry fe = o.directory() ? null : expiry.find(vp.key()).orElse(null);
+                    if (expiry.expired(fe)) {
+                        throw FdropException.notFound("no such file: " + vp.virtual());
+                    }
+                    yield entry(vp, o, fe);
                 }
             };
         } catch (IOException e) {
@@ -165,15 +198,16 @@ public final class FileService {
         }
     }
 
-    private Entry entry(VirtualPath area, ObjectInfo o) {
+    private Entry entry(VirtualPath area, ObjectInfo o, FileExpiry fe) {
         String vpath = PathResolver.virtualFor(area, o.path());
         long mtime = o.lastModified() == null ? 0 : o.lastModified().toEpochMilli();
         return new Entry(o.name(), vpath, o.directory() ? EntryType.DIR : EntryType.FILE, o.size(), mtime,
-                area.writable(), null);
+                area.writable(), null, fe == null ? null : fe.expiresAt(), fe == null ? null : fe.expiresIn(),
+                fe == null ? null : fe.source());
     }
 
-    /** A file to read: its metadata plus the resolved path. */
-    public record ReadTarget(VirtualPath path, ObjectInfo info) {
+    /** A file to read: its metadata, the resolved path, and when it expires (epoch millis) if it does. */
+    public record ReadTarget(VirtualPath path, ObjectInfo info, Long expiresAt) {
     }
 
     public ReadTarget readTarget(Principal p, String path) {
@@ -187,14 +221,52 @@ public final class FileService {
             if (o.directory()) {
                 throw FdropException.badRequest("not a file: " + vp.virtual());
             }
-            return new ReadTarget(vp, o);
+            FileExpiry fe = expiry.find(vp.key()).orElse(null);
+            if (expiry.expired(fe)) {
+                throw FdropException.notFound("no such file: " + vp.virtual());
+            }
+            return new ReadTarget(vp, o, fe == null ? null : fe.expiresAt());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
+    /** Opens a read; a file with an expiry stops being readable at that instant, even mid-transfer. */
     public ReadableByteChannel openRead(ReadTarget t, long offset, long length) throws IOException {
-        return storage.openRead(t.path().key(), offset, length);
+        if (t.expiresAt() != null && t.expiresAt() <= expiry.now().toEpochMilli()) {
+            throw FdropException.notFound("no such file: " + t.path().virtual());
+        }
+        ReadableByteChannel ch = storage.openRead(t.path().key(), offset, length);
+        return t.expiresAt() == null ? ch : new ExpiringChannel(ch, t.expiresAt());
+    }
+
+    /** Cuts a read off at the file's expiry. */
+    private final class ExpiringChannel implements ReadableByteChannel {
+        private final ReadableByteChannel in;
+        private final long expiresAt;
+
+        ExpiringChannel(ReadableByteChannel in, long expiresAt) {
+            this.in = in;
+            this.expiresAt = expiresAt;
+        }
+
+        @Override
+        public int read(ByteBuffer dst) throws IOException {
+            if (expiry.now().toEpochMilli() >= expiresAt) {
+                throw new IOException("the file expired during the transfer");
+            }
+            return in.read(dst);
+        }
+
+        @Override
+        public boolean isOpen() {
+            return in.isOpen();
+        }
+
+        @Override
+        public void close() throws IOException {
+            in.close();
+        }
     }
 
     // ---- writing ----
@@ -207,6 +279,7 @@ public final class FileService {
         if (!vp.writable()) {
             throw FdropException.forbidden("you have read-only access to " + vp.parentVirtual());
         }
+        expiry.refuseReservedName(vp.name());
         if (vp.kind() == Kind.FORWARD) {
             requireForwardOpen(vp.folder());
         }
@@ -222,6 +295,10 @@ public final class FileService {
             if (existing.isPresent()) {
                 if (existing.get().directory()) {
                     throw FdropException.conflict("a folder with that name exists: " + vp.virtual());
+                }
+                if (expiry.expired(expiry.find(vp.key()).orElse(null))) {
+                    throw FdropException.conflict("an expired file is still being deleted here; try again in a"
+                            + " moment: " + vp.virtual());
                 }
                 if (!overwrite) {
                     throw FdropException.conflict("file exists: " + vp.virtual());
@@ -275,8 +352,18 @@ public final class FileService {
      */
     public FileWrite openWrite(Principal p, String path, long expectedSize, boolean overwrite, Via via,
                                String clientIp) {
+        return openWrite(p, path, expectedSize, overwrite, via, clientIp, null);
+    }
+
+    /**
+     * As above, with an expiry given with the upload ({@code expiresIn}, may be null), checked before any bytes are
+     * accepted.
+     */
+    public FileWrite openWrite(Principal p, String path, long expectedSize, boolean overwrite, Via via,
+                               String clientIp, String expiresIn) {
         VirtualPath vp = resolver.resolve(p, path);
         Optional<ObjectInfo> existing = checkWritable(p, vp, overwrite);
+        String explicit = expiry.validateExplicit(p, vp, expiresIn, via);
         long replacing = existing.map(ObjectInfo::size).orElse(0L);
         if (expectedSize >= 0) {
             checkSize(vp.quotaOwner(), expectedSize, replacing);
@@ -284,7 +371,7 @@ public final class FileService {
         long limit = Math.min(cfg.limits.maxFileSize.bytes(), remainingQuota(vp.quotaOwner()) + replacing);
         try {
             WriteHandle h = storage.openWrite(vp.key(), new WriteOptions(null, overwrite, expectedSize));
-            return new FileWrite(p, vp, h, limit, replacing, via, clientIp);
+            return new FileWrite(p, vp, h, limit, replacing, via, clientIp, explicit);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -299,11 +386,12 @@ public final class FileService {
         private final long replacing;
         private final Via via;
         private final String clientIp;
+        private final String expiresIn;
         private String startIp;
         private boolean done;
 
         private FileWrite(Principal principal, VirtualPath vp, WriteHandle handle, long limit, long replacing, Via via,
-                          String clientIp) {
+                          String clientIp, String expiresIn) {
             this.principal = principal;
             this.vp = vp;
             this.handle = handle;
@@ -311,6 +399,7 @@ public final class FileService {
             this.replacing = replacing;
             this.via = via;
             this.clientIp = clientIp;
+            this.expiresIn = expiresIn;
         }
 
         public VirtualPath path() {
@@ -343,7 +432,8 @@ public final class FileService {
             if (replacing > 0) {
                 records.markDeleted(info.path().toString());
             }
-            recorder.record(principal, vp, info, via, clientIp, startIp);
+            UploadRecord rec = recorder.record(principal, vp, info, via, clientIp, startIp);
+            expiry.applyOnCommit(principal, vp, expiresIn, via, rec, expiry.now());
             return info;
         }
 
@@ -371,6 +461,7 @@ public final class FileService {
         if (vp.kind() == Kind.FORWARD) {
             throw FdropException.forbidden("forward folders accept files only");
         }
+        expiry.refuseReservedName(vp.name());
         if (!vp.writable()) {
             throw FdropException.forbidden("you have read-only access to " + vp.parentVirtual());
         }
@@ -404,6 +495,9 @@ public final class FileService {
         try {
             ObjectInfo o = storage.stat(vp.key()).orElseThrow(() -> FdropException.notFound("no such file: "
                     + vp.virtual()));
+            if (!o.directory() && expiry.expired(expiry.find(vp.key()).orElse(null))) {
+                throw FdropException.notFound("no such file: " + vp.virtual());
+            }
             long bytes = o.size();
             if (o.directory()) {
                 try (Stream<ObjectInfo> s = storage.list(vp.key(), false)) {
@@ -416,6 +510,7 @@ public final class FileService {
             storage.delete(vp.key());
             users.addUsage(vp.quotaOwner(), -bytes);
             records.markDeleted(vp.key().toString());
+            expiry.onDeleted(vp.key());
             Audit.log("delete", "user", p.username(), "path", vp.virtual(), "bytes", bytes);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -423,6 +518,10 @@ public final class FileService {
     }
 
     public Entry move(Principal p, String from, String to) {
+        return moveWithExpiry(p, from, to).entry();
+    }
+
+    public Moved moveWithExpiry(Principal p, String from, String to) {
         VirtualPath src = resolver.resolve(p, from);
         VirtualPath dst = resolver.resolve(p, to);
         for (VirtualPath v : List.of(src, dst)) {
@@ -436,12 +535,16 @@ public final class FileService {
         if (src.kind() == Kind.FORWARD || dst.kind() == Kind.FORWARD) {
             throw FdropException.forbidden("files cannot be moved into or out of forward folders");
         }
+        expiry.refuseReservedName(dst.name());
         if (dst.key().startsWith(src.key())) {
             throw FdropException.badRequest("cannot move a folder into itself");
         }
         try {
             ObjectInfo o = storage.stat(src.key()).orElseThrow(() -> FdropException.notFound("no such file: "
                     + src.virtual()));
+            if (!o.directory() && expiry.expired(expiry.find(src.key()).orElse(null))) {
+                throw FdropException.notFound("no such file: " + src.virtual());
+            }
             if (storage.stat(dst.key()).isPresent()) {
                 throw FdropException.conflict("already exists: " + dst.virtual());
             }
@@ -461,9 +564,12 @@ public final class FileService {
                 users.addUsage(dst.quotaOwner(), bytes);
             }
             records.markMoved(src.key().toString(), dst.key().toString(), src.virtual(), dst.virtual());
-            Audit.log("move", "user", p.username(), "from", src.virtual(), "to", dst.virtual());
+            boolean shortened = expiry.onMoved(p, src, dst);
+            Audit.log("move", "user", p.username(), "from", src.virtual(), "to", dst.virtual(),
+                    "expiryShortened", shortened);
             ObjectInfo moved = storage.stat(dst.key()).orElse(o);
-            return entry(dst, moved);
+            return new Moved(entry(dst, moved, moved.directory() ? null : expiry.find(dst.key()).orElse(null)),
+                    shortened);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

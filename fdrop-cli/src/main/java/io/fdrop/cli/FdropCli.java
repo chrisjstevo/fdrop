@@ -190,6 +190,11 @@ public final class FdropCli implements Callable<Integer> {
         @Option(names = "--overwrite", description = "Replace an existing file at the target")
         boolean overwrite;
 
+        @Option(names = "--expires-in", paramLabel = "EXPIRY",
+                description = "Delete the file this long after it arrives, e.g. '6 days', 2weeks or never; without it"
+                        + " the folder's default applies")
+        String expiresIn;
+
         @Option(names = "--parallel", paramLabel = "N", defaultValue = "3",
                 description = "Chunks sent at once, 1 to 8 (default ${DEFAULT-VALUE})")
         int parallel;
@@ -214,6 +219,7 @@ public final class FdropCli implements Callable<Integer> {
                 throw new CliException(CliException.USAGE, "--parallel must be between 1 and 8");
             }
             Duration giveUpAfter = Settings.duration(retryFor);
+            String expiry = expiresIn == null ? null : ExpirySyntax.canonical(expiresIn);
             Credentials creds = connection.credentials();
             Api api = connection.api(creds);
             Uploader.Progress progress = ctx.terminal() && !quiet && !json
@@ -228,7 +234,7 @@ public final class FdropCli implements Callable<Integer> {
             Uploader.Result r;
             try {
                 r = uploader.upload(new Uploader.Options(file, remote, overwrite, parallel, giveUpAfter, !noResume,
-                        creds.fingerprint()));
+                        creds.fingerprint(), expiry));
             } finally {
                 if (ctx.installShutdownHook()) {
                     try {
@@ -248,10 +254,15 @@ public final class FdropCli implements Callable<Integer> {
                 n.put("sha256", r.sha256());
                 n.put("uploadId", r.uploadId());
                 n.put("resumed", r.resumed());
+                if (r.file().hasNonNull("expiresAt")) {
+                    n.put("expiresAt", r.file().get("expiresAt").asText());
+                    n.put("expiresIn", r.file().path("expiresIn").asText(null));
+                }
                 ctx.out().println(n);
             } else if (!quiet) {
                 ctx.out().println("Uploaded " + r.path() + " (" + bytes(r.size()) + ", sha256 " + r.sha256() + ")"
                         + (r.resumed() ? ", resumed" : "")
+                        + (r.file().hasNonNull("expiresAt") ? "; expires " + r.file().get("expiresAt").asText() : "")
                         + (r.path().startsWith("/forward/") ? "; queued for forwarding" : ""));
             }
             return CliException.OK;

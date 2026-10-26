@@ -117,7 +117,8 @@ public final class SftpServer implements AutoCloseable {
             sshd.setServerProxyAcceptor(new ProxyProtocolAcceptor(new TrustedProxies(app.config.http.trustedProxies)));
         }
 
-        SftpSubsystemFactory sftp = new SftpSubsystemFactory.Builder().withFileSystemAccessor(new Accessor()).build();
+        SftpSubsystemFactory sftp = new SftpSubsystemFactory.Builder().withFileSystemAccessor(new Accessor())
+                .withSftpErrorStatusDataHandler(new ErrorMessages()).build();
         sftp.addSftpEventListener(new Events());
         sshd.setSubsystemFactories(List.of(sftp));
         sshd.setFileSystemFactory(new FileSystemFactory() {
@@ -432,6 +433,24 @@ public final class SftpServer implements AutoCloseable {
         public void syncFileData(SftpSubsystemProxy subsystem, FileHandle fileHandle, Path file, String handle,
                                  Channel channel) {
             // data is durable when the file is committed on close
+        }
+    }
+
+    /**
+     * MINA reports most failures as "General failure". A refused value the user can correct (an expiry control file
+     * with a typo, say) carries fdrop's own message instead, so {@code sftp} and WinSCP print the reason.
+     */
+    private static final class ErrorMessages implements org.apache.sshd.sftp.server.SftpErrorStatusDataHandler {
+        @Override
+        public String resolveErrorMessage(org.apache.sshd.sftp.server.SftpSubsystemEnvironment env, int id,
+                                          Throwable e, int subStatus, int cmd, Object... args) {
+            for (Throwable t = e; t != null; t = t.getCause()) {
+                if (t instanceof io.fdrop.core.error.FdropException fe && fe.status() == 400 && fe.type() != null) {
+                    return fe.getMessage();
+                }
+            }
+            return org.apache.sshd.sftp.server.SftpErrorStatusDataHandler.super.resolveErrorMessage(env, id, e,
+                    subStatus, cmd, args);
         }
     }
 

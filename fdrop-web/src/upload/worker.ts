@@ -193,6 +193,7 @@ async function run(job: Job) {
         size: s.file.size,
         lastModified: s.file.lastModified,
         overwrite: s.overwrite,
+        expiresIn: s.expiresIn,
       });
       job.uploadId = r.body.id;
       job.chunkSize = r.body.chunkSize;

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { del, get, patch, post, q } from "../api/client";
+import { expiryProblem } from "../util/expiry";
 import type { AppAccount, AppCreated, AppMethod } from "../api/types";
 import { useMe } from "../auth/useMe";
 import { ProblemNote } from "../components/TwoFactor";
@@ -142,6 +143,8 @@ interface AppForm {
   responsible: string;
   methods: AppMethod[];
   sources: string;
+  /** Edit only: the default expiry for files in the account's Home. */
+  homeExpiry?: string;
 }
 
 function MethodAndSourceFields({ form, setForm }: { form: AppForm; setForm: (f: AppForm) => void }) {
@@ -290,6 +293,7 @@ export function AdminApplicationPage() {
                   responsible: a.responsible ?? "",
                   methods: a.allowedMethods,
                   sources: a.allowedSources.join("\n"),
+                  homeExpiry: a.homeDefaultExpiry ?? "",
                 })
               }
             >
@@ -319,6 +323,7 @@ export function AdminApplicationPage() {
                 responsible: form.responsible.trim(),
                 allowedMethods: form.methods,
                 allowedSources: sourcesOf(form.sources),
+                homeDefaultExpiry: form.homeExpiry?.trim() ?? "",
               });
             }}
           >
@@ -329,9 +334,29 @@ export function AdminApplicationPage() {
               <input id="edit-owner" type="text" value={form.responsible} onChange={(e) => setForm({ ...form, responsible: e.target.value })} />
             </Field>
             <MethodAndSourceFields form={form} setForm={setForm} />
+            <Field
+              label="Default expiry for files in its Home"
+              htmlFor="edit-home-expiry"
+              hint={
+                (form.homeExpiry?.trim() && expiryProblem(form.homeExpiry)) ||
+                "Files it uploads to Home without an expiry are deleted this long after they arrive, e.g. 30 days. Empty: never."
+              }
+            >
+              <input
+                id="edit-home-expiry"
+                type="text"
+                placeholder="never"
+                value={form.homeExpiry ?? ""}
+                onChange={(e) => setForm({ ...form, homeExpiry: e.target.value })}
+              />
+            </Field>
             <div className={s.actions}>
               <Button onClick={() => setForm(undefined)}>Cancel</Button>
-              <Button type="submit" variant="primary" disabled={save.isPending || form.methods.length === 0}>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={save.isPending || form.methods.length === 0 || !!(form.homeExpiry?.trim() && expiryProblem(form.homeExpiry))}
+              >
                 Save
               </Button>
             </div>
@@ -347,6 +372,8 @@ export function AdminApplicationPage() {
           <dd>{a.allowedMethods.map(methodLabel).join(", ")}</dd>
           <dt>Source addresses</dt>
           <dd>{a.allowedSources.length ? a.allowedSources.join(", ") : "Any"}</dd>
+          <dt>Home default expiry</dt>
+          <dd>{a.homeDefaultExpiry ?? "Never"}</dd>
           <dt>Storage used</dt>
           <dd>
             {formatBytes(a.usedBytes)} of {formatBytes(a.quotaBytes)}

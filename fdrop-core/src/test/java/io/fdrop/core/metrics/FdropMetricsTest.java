@@ -33,6 +33,11 @@ class FdropMetricsTest {
         m.keycloakCall("token", true, 1000);
         m.appAuth("http", "mtls", "success");
         m.appCredentialsExpiring(Map.of(List.of("certificate", "30d"), 1L));
+        m.expirySet("http", "upload");
+        m.expiryRefused("sftp", "syntax");
+        m.expiryDeleted("local", "deleted");
+        m.expiryDeleteLag("local", 1500);
+        m.expiryGauges(4, 0);
         m.update(new FdropMetrics.Snapshot(Map.of("user", 3L, "application", 1L), 1000, Map.of("shared", 1L), Map.of("OPEN", 2L),
                 Map.of(List.of("QUEUED", "dst_1"), 1L)));
 
@@ -60,7 +65,9 @@ class FdropMetricsTest {
         assertThat(seen).contains("fdrop_build_info", "fdrop_http_requests_seconds", "fdrop_transfer_bytes_total",
                 "fdrop_storage_used_bytes", "fdrop_forward_jobs", "fdrop_forward_bytes_total",
                 "fdrop_sftp_auth_total", "fdrop_keycloak_request_seconds", "fdrop_users", "fdrop_app_auth_total",
-                "fdrop_app_credentials_expiring");
+                "fdrop_app_credentials_expiring", "fdrop_expiry_set_total", "fdrop_expiry_refused_total",
+                "fdrop_expiry_files", "fdrop_expiry_overdue_files", "fdrop_expiry_deleted_total",
+                "fdrop_expiry_delete_lag_seconds");
         assertThat(m.scrape("application/openmetrics-text")).contains("# EOF");
     }
 }

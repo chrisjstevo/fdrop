@@ -70,6 +70,19 @@ upload:
   ttl: 24h
   maxParallelChunks: 3
   historyRetention: 365d   # My uploads rows
+expiry:
+  enabled: true            # false = no new expiries can be set and the UI hides its controls; existing expiries still run
+  max: 10y                 # longest expiry anyone can set, and the cap on folder and home settings (at most 100y)
+  home:
+    default: null          # expiry for /home uploads when the user has set no default; null = never
+    max: null              # longest expiry in any /home; when set, every /home file expires
+  sweepInterval: 30s       # how often each node looks for due files
+  batchSize: 500           # files claimed per sweep
+  claimTimeout: 5m         # a claim not finished by then is taken over by another node
+  maxDeletesPerSecond: 200 # per node, when working through a backlog
+  sftp:
+    suffix: .fdrop-expires # control file suffix; reserved on every protocol
+    pendingFor: 10m        # how long a control file written before its file is kept
 db:
   url: jdbc:postgresql://db.example.com/fdrop
   username: fdrop

@@ -6,6 +6,8 @@ import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.Permission;
 import io.fdrop.core.model.Records.ForwardJob;
+import io.fdrop.core.service.FolderService;
+import io.fdrop.http.Json;
 import io.fdrop.http.Ctx;
 import io.fdrop.http.Response;
 import io.fdrop.http.Router;
@@ -77,10 +79,28 @@ public final class FoldersApi {
 
     private Response update(Ctx ctx) {
         JsonNode b = ctx.jsonTree();
-        return Response.json(app.folderService.update(ctx.principal(), ctx.param("id"),
+        String defaultExpiry = setting(b, "defaultExpiry");
+        String maxExpiry = setting(b, "maxExpiry");
+        int shortened = 0;
+        if (defaultExpiry != null || maxExpiry != null) {
+            shortened = app.folderService.updateExpiry(ctx.principal(), ctx.param("id"), defaultExpiry, maxExpiry,
+                    b.path("applyToExisting").asBoolean(false));
+        }
+        FolderService.FolderView v = app.folderService.update(ctx.principal(), ctx.param("id"),
                 b.hasNonNull("name") ? b.get("name").asText() : null,
                 b.hasNonNull("destinationId") ? b.get("destinationId").asText() : null,
-                b.hasNonNull("keepDays") ? b.get("keepDays").asInt() : null));
+                b.hasNonNull("keepDays") ? b.get("keepDays").asInt() : null);
+        Map<String, Object> out = Json.MAPPER.convertValue(v, LinkedHashMap.class);
+        out.put("expiryFilesChanged", shortened);
+        return Response.json(out);
+    }
+
+    /** An expiry setting in a PATCH: absent means unchanged, null or blank means cleared. */
+    private static String setting(JsonNode b, String field) {
+        if (!b.has(field)) {
+            return null;
+        }
+        return b.get(field).isNull() ? "" : b.get(field).asText();
     }
 
     private Response putMember(Ctx ctx) {

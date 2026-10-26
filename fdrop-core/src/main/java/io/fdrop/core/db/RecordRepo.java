@@ -27,7 +27,8 @@ public final class RecordRepo {
                 rs.getLong("size"), WentTo.valueOf(rs.getString("went_to")), rs.getString("folder_id"),
                 rs.getString("path_at_upload"), rs.getString("path_now"), rs.getString("storage_key"),
                 RecordStatus.valueOf(rs.getString("status")), Via.valueOf(rs.getString("via")),
-                rs.getString("client_ip"), rs.getString("start_ip"), rs.getLong("completed_at"));
+                rs.getString("client_ip"), rs.getString("start_ip"), rs.getLong("completed_at"),
+                Db.getLong(rs, "expires_at"));
     }
 
     private static ForwardJob job(ResultSet rs) throws SQLException {
@@ -42,10 +43,10 @@ public final class RecordRepo {
 
     public void insert(UploadRecord r) {
         db.update("INSERT INTO upload_record (id, user_sub, file_name, size, went_to, folder_id, path_at_upload,"
-                        + " path_now, storage_key, status, via, client_ip, start_ip, completed_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", r.id(), r.userSub(), r.fileName(),
+                        + " path_now, storage_key, status, via, client_ip, start_ip, completed_at, expires_at)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", r.id(), r.userSub(), r.fileName(),
                 r.size(), r.wentTo(), r.folderId(), r.pathAtUpload(), r.currentPath(), r.storageKey(), r.status(),
-                r.via(), r.clientIp(), r.startIp(), r.completedAt());
+                r.via(), r.clientIp(), r.startIp(), r.completedAt(), r.expiresAt());
     }
 
     public Optional<UploadRecord> find(String id) {
@@ -149,6 +150,23 @@ public final class RecordRepo {
             db.update("UPDATE upload_record SET storage_key = ?, path_now = ?, status = 'MOVED' WHERE id = ?",
                     newKey, newPath, r.id());
         }
+    }
+
+    /** The expiry recorded for an upload changed (null when cleared). */
+    public void setExpiresAt(String id, Long expiresAt) {
+        db.update("UPDATE upload_record SET expires_at = ? WHERE id = ?", expiresAt, id);
+    }
+
+    /** The file at {@code key} expired and was deleted. */
+    public void markExpired(String key) {
+        db.update("UPDATE upload_record SET status = 'EXPIRED', storage_key = NULL WHERE storage_key = ?"
+                + " AND status IN ('STORED', 'MOVED')", key);
+    }
+
+    /** The newest record still pointing at a stored file, to keep its expiry in step. */
+    public Optional<UploadRecord> currentFor(String key) {
+        return db.queryOne("SELECT * FROM upload_record WHERE storage_key = ? AND status IN ('STORED', 'MOVED',"
+                + " 'SENT') ORDER BY completed_at DESC LIMIT 1", RecordRepo::record, key);
     }
 
     public int deleteOlderThan(long cutoff) {

@@ -41,8 +41,13 @@ class Uploader {
         };
     }
 
+    /** {@code expiresIn} is the canonical expiry to give the file, or null for the folder's default. */
     record Options(Path file, String remotePath, boolean overwrite, int parallel, Duration retryFor, boolean resume,
-                   String certFingerprint) {
+                   String certFingerprint, String expiresIn) {
+        Options(Path file, String remotePath, boolean overwrite, int parallel, Duration retryFor, boolean resume,
+                String certFingerprint) {
+            this(file, remotePath, overwrite, parallel, retryFor, resume, certFingerprint, null);
+        }
     }
 
     /** What was uploaded; {@code resumed} when an earlier run's session was continued. */
@@ -90,7 +95,8 @@ class Uploader {
             throw new CliException(CliException.USAGE, "cannot read " + file + ": " + e.getMessage());
         }
         String sha256 = hash(file, 0, size);
-        String key = SessionStore.key(api.base().toString(), o.certFingerprint(), target, size, lastModified, sha256);
+        String key = SessionStore.key(api.base().toString(), o.certFingerprint(), target, size, lastModified, sha256,
+                o.expiresIn());
         Backoff backoff = new Backoff(clock, o.retryFor(), random);
 
         SessionStore.Saved session = o.resume() ? store.load(key).orElse(null) : null;
@@ -109,7 +115,7 @@ class Uploader {
         Map<Integer, Integer> conflicts = new ConcurrentHashMap<>();
         while (true) {
             if (session == null) {
-                session = create(target, size, lastModified, sha256, o.overwrite(), backoff);
+                session = create(target, size, lastModified, sha256, o.overwrite(), o.expiresIn(), backoff);
                 store.save(key, session, target, file);
                 received.clear();
             }
@@ -139,13 +145,16 @@ class Uploader {
     }
 
     private SessionStore.Saved create(String target, long size, long lastModified, String sha256, boolean overwrite,
-                                      Backoff backoff) throws InterruptedException {
+                                      String expiresIn, Backoff backoff) throws InterruptedException {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("path", target);
         body.put("size", size);
         body.put("lastModified", lastModified);
         body.put("sha256", sha256);
         body.put("overwrite", overwrite);
+        if (expiresIn != null) {
+            body.put("expiresIn", expiresIn);
+        }
         Api.Reply r = retrying(() -> api.call("POST", "/api/v1/uploads", body), backoff);
         switch (r.status()) {
             case 409 -> throw new CliException(CliException.EXISTS, target + " already exists; use --overwrite to"

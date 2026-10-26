@@ -18,16 +18,25 @@
   --color-panel: #ffffff;
   --mark-tint: var(--color-ink);
   --mark-opacity: 0.08;
+  /* Workspace layout: a light sidebar, soft hover and selection tints, a filled search field. */
+  --color-sidebar: #f9f9f9;
+  --color-hover: #f4f7fa;
+  --color-selected: #e6ecf2;
+  --color-tile: #eef2f6;
+  --color-search: #f2f5f8;
+  --color-line: #e3e9ef;
 
   --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --text-body: 16px;
   --text-small: 14px;
-  --text-title: 40px;
+  --text-title: 32px;
   --text-label: 12px;
   --line-body: 24px;
 
   --radius-pill: 24px;
   --radius: 4px;
+  --radius-nav: 8px;
+  --radius-card: 12px;
   --shadow-raised: 0 20px 28px rgba(19, 66, 107, 0.2);
   --focus-ring: 2px solid var(--color-coral);
 
@@ -39,29 +48,41 @@
   --space-6: 32px;
   --space-7: 48px;
 
-  --topbar-height: 56px;
-  --sidebar-width: 232px;
+  --topbar-height: 64px;
+  --sidebar-width: 256px;
   --tap: 44px;
 }
 
-/* Dark theme: lme.com has none, so it is derived from the same palette. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-ink: #ffffff;
-    --color-surface: #171739;
-    --color-surface-alt: #13426b;
-    --color-panel: #1c2050;
-    --color-border: rgba(255, 255, 255, 0.3);
-    --color-divider: rgba(255, 255, 255, 0.2);
-    --color-muted: #c0cdd8;
-    --color-link: #b5e3d8;
-    --mark-tint: #ffffff;
-    --shadow-raised: 0 20px 28px rgba(0, 0, 0, 0.4);
-  }
+/*
+ * Dark theme: lme.com has none, so it is derived from the same palette. theme/theme.ts sets data-theme on <html>
+ * from the user's choice, or the system setting until they choose.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-ink: #ffffff;
+  --color-surface: #171739;
+  --color-surface-alt: #13426b;
+  --color-panel: #1c2050;
+  --color-border: rgba(255, 255, 255, 0.3);
+  --color-divider: rgba(255, 255, 255, 0.2);
+  --color-muted: #c0cdd8;
+  --color-link: #b5e3d8;
+  --mark-tint: #ffffff;
+  --shadow-raised: 0 20px 28px rgba(0, 0, 0, 0.4);
+  --color-sidebar: #1c2050;
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-selected: rgba(255, 255, 255, 0.12);
+  --color-tile: rgba(255, 255, 255, 0.08);
+  --color-search: rgba(255, 255, 255, 0.08);
+  --color-line: rgba(255, 255, 255, 0.14);
 }
 
 @media (max-width: 639px) {
   :root {
-    --text-title: 32px;
+    --text-title: 26px;
   }
 }

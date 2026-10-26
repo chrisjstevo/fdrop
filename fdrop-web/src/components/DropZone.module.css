@@ -15,20 +15,21 @@
   outline-offset: 4px;
 }
 
-/* The drop zone: dashed border on the alternate surface, the fdrop mark as a faint watermark behind the text. */
+/* The drop strip under the file list: dashed border, the fdrop mark as a faint watermark behind the text. */
 .zone {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-2);
   width: 100%;
-  min-height: 160px;
-  margin-bottom: var(--space-5);
+  min-height: 72px;
+  margin-top: var(--space-4);
   border: 2px dashed var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface-alt);
-  color: var(--color-ink);
-  font-size: var(--text-body);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: var(--text-small);
   font-weight: 600;
   cursor: pointer;
   overflow: hidden;
@@ -36,6 +37,7 @@
 
 .zone:hover {
   border-color: var(--color-ink);
+  color: var(--color-ink);
 }
 
 .zoneOver {
@@ -46,7 +48,7 @@
   position: absolute;
   inset: 0;
   margin: auto;
-  height: min(70%, 160px);
+  height: 80%;
   aspect-ratio: 1;
   background-color: var(--mark-tint);
   opacity: var(--mark-opacity);
@@ -66,12 +68,6 @@
   text-align: center;
 }
 
-/* Phones: a short bar; the mark shrinks with it. */
-@media (max-width: 639px) {
-  .zone {
-    min-height: 72px;
-  }
-}
 
 .disabled {
   color: var(--color-muted);

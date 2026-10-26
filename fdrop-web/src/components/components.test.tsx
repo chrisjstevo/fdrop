@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, ApiError, setCsrfToken } from "../api/client";
 import type { Me } from "../api/types";
 import { formatBytes, formatDuration } from "../util/format";
 import { check } from "./DropZone";
+import { ExpiresCell, ExpiryPicker } from "./Expiry";
 import { ProblemNote, TwoFactorSection } from "./TwoFactor";
 import { ProgressBar } from "./ui";
 
@@ -17,6 +18,7 @@ const me = (over: Partial<Me> = {}): Me => ({
   usedBytes: 600,
   reservedBytes: 100,
   twoFactor: { policy: "admins", required: false, thisSession: false, sftpCodes: true, factors: [] },
+  expiry: { enabled: true, serverMax: "10 years" },
   settings: {
     simpleUploadMax: 1,
     maxFileSize: 500,
@@ -129,5 +131,35 @@ describe("two-factor", () => {
     expect(screen.getByText(/password and a code from your authenticator app/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Set up authenticator app" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New recovery codes" })).toBeInTheDocument();
+  });
+});
+
+describe("expiry controls", () => {
+  it("offers the folder default, disables presets over the maximum and hides Never", () => {
+    const onChange = vi.fn();
+    render(<ExpiryPicker folder={{ enabled: true, allowed: true, default: "1 hour", max: "1 day", serverMax: "10 years" }} onChange={onChange} />);
+    const select = screen.getByLabelText("Expires") as HTMLSelectElement;
+    expect(select.options[0].textContent).toBe("folder default, 1 hour");
+    const byValue = (v: string) => Array.from(select.options).find((o) => o.value === v);
+    expect(byValue("1 day")?.disabled).toBe(false);
+    expect(byValue("7 days")?.disabled).toBe(true);
+    expect(byValue("never")).toBeUndefined();
+    expect(onChange).toHaveBeenLastCalledWith({});
+  });
+
+  it("checks a custom value as it is typed, with the server's message", () => {
+    const onChange = vi.fn();
+    render(<ExpiryPicker folder={{ enabled: true, allowed: true, serverMax: "10 years" }} onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText("Expires"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Custom expiry"), { target: { value: "6 dys" } });
+    expect(screen.getByRole("alert").textContent).toBe("Unknown unit 'dys'. Use one of sec, min, hour, day, week, month, year");
+    fireEvent.change(screen.getByLabelText("Custom expiry"), { target: { value: "6days" } });
+    expect(onChange).toHaveBeenLastCalledWith({ value: "6 days", error: undefined });
+  });
+
+  it("shows the time left", () => {
+    const at = new Date(Date.now() + 2 * 3600_000 + 1000).toISOString();
+    render(<ExpiresCell entry={{ name: "a", path: "/home/a", type: "FILE", size: 1, writable: true, expiresAt: at }} />);
+    expect(screen.getByText("in 2 h")).toBeTruthy();
   });
 });

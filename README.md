@@ -233,6 +233,24 @@ password and then a code (`sftp -o PreferredAuthentications=keyboard-interactive
    first created, so a plain restart is not enough.
 3. Assign the destination to a user; as that user, create a forward folder and drop a file into it.
 
+### Trying file expiry
+
+- In the browser, pick an **Expires** value above the drop zone before dropping files, or use **Set expiry…** on a
+  file. A shared folder's owner sets a default and a maximum in its settings; your Home default is on the Account
+  page.
+- Over HTTP: `curl -H 'X-Fdrop-Expires-In: 6 days' -T report.pdf 'https://localhost:8443/api/v1/files/content?path=/home/report.pdf'`
+  (with a bearer token or an application account), or `"expiresIn": "6 days"` when starting a resumable upload.
+- With the CLI: `fdrop upload nightly.csv /home/ --expires-in 2weeks`.
+- Over SFTP, upload a control file holding the expiry, then the file:
+
+  ```text
+  sftp> put report.pdf.fdrop-expires     # a local file containing "6 days"
+  sftp> put report.pdf
+  sftp> get report.pdf.fdrop-expires /dev/stdout
+  ```
+
+Expired files disappear at once and are deleted by the sweeper within about `expiry.sweepInterval` (30 s).
+
 ## Configuration
 
 `fdrop.yaml` (or `$FDROP_CONFIG`); every key can be overridden with an environment variable named after its path,
@@ -257,3 +275,7 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 - SFTP resume copies the existing file into the new upload rather than using S3's server-side part copy, and
   out-of-order SFTP writes are accepted within a 16 MiB window.
 - Browser sessions are held in memory: a restart signs users out, and several nodes need sticky sessions.
+- File expiry: the sweeper claims due rows with a conditional `UPDATE` (as forward workers claim jobs) rather than
+  `SELECT … FOR UPDATE SKIP LOCKED`, and uses the nodes' clocks rather than the database's, since every timestamp
+  in the schema is epoch milliseconds written by fdrop. S3 objects are deleted one `DeleteObject` at a time, after a
+  `HeadObject` for the quota, not in `DeleteObjects` batches.

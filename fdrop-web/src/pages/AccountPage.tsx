@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { del, get, post, signOut } from "../api/client";
-import type { SshKey } from "../api/types";
+import { del, get, patch, post, signOut } from "../api/client";
+import type { Me, SshKey } from "../api/types";
 import { useMe } from "../auth/useMe";
 import { ProblemNote, TwoFactorSection } from "../components/TwoFactor";
-import { Button, Empty, Field, ProgressBar, RowMenu } from "../components/ui";
+import { Button, Empty, ErrorNote, Field, ProgressBar, RowMenu } from "../components/ui";
+import { expiryProblem, longerThan, parseExpiry } from "../util/expiry";
 import { formatBytes, formatDate } from "../util/format";
 import s from "./pages.module.css";
 
@@ -68,6 +69,7 @@ export function AccountPage() {
         </div>
       )}
       <TwoFactorSection me={m} />
+      {m.roles.standard && m.expiry?.enabled && <HomeExpirySection me={m} />}
       {m.roles.standard && m.settings.sftpPort && (
         <section className={s.section}>
           <h2>SFTP access</h2>
@@ -82,6 +84,14 @@ export function AccountPage() {
             <code>/forward</code>.
           </p>
           <pre className={s.pre}>{`sftp -P ${m.settings.sftpPort} ${m.username}@${host}`}</pre>
+          {m.expiry?.enabled && (
+            <p>
+              To give one file an expiry over SFTP, first upload a small file named after it with{" "}
+              <code>.fdrop-expires</code> added, holding the expiry, e.g. <code>report.pdf.fdrop-expires</code> containing{" "}
+              <code>6 days</code>; then upload <code>report.pdf</code>. Reading the control file back shows the expiry and
+              removing it clears it. Without one, the folder's default applies.
+            </p>
+          )}
         </section>
       )}
       {m.roles.standard && (
@@ -138,5 +148,57 @@ export function AccountPage() {
         </section>
       )}
     </>
+  );
+}
+
+/** The default expiry for files uploaded into Home without one. */
+function HomeExpirySection({ me }: { me: Me }) {
+  const client = useQueryClient();
+  const [value, setValue] = useState(me.expiry.homeDefault ?? "");
+  const max = me.expiry.homeMax ?? me.expiry.serverMax;
+  const problem = value.trim()
+    ? (expiryProblem(value) ??
+      (longerThan(parseExpiry(value), max) ? `'${parseExpiry(value)}' is longer than the maximum of '${max}'` : undefined))
+    : undefined;
+  const m = useMutation({
+    mutationFn: () => patch<Me>("/api/v1/me", { homeDefaultExpiry: value.trim() }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["me"] }),
+  });
+  const fallback = me.expiry.serverHomeDefault ?? (me.expiry.homeMax ? `the maximum, ${me.expiry.homeMax}` : undefined);
+  return (
+    <section className={s.section}>
+      <h2>File expiry</h2>
+      <p>
+        Files you upload to Home without an expiry are deleted automatically after your default.
+        {me.expiry.homeMax && ` Every file in Home expires within ${me.expiry.homeMax}.`}
+      </p>
+      <form
+        className={s.form}
+        onSubmit={(e) => {
+          e.preventDefault();
+          m.mutate();
+        }}
+      >
+        <Field
+          label="Default expiry for files in Home"
+          htmlFor="home-default-expiry"
+          hint={problem ?? `For example 30 days or 1 year. Empty: ${fallback ?? "files never expire"}.`}
+        >
+          <input
+            id="home-default-expiry"
+            type="text"
+            placeholder={fallback ?? "never"}
+            value={value}
+            aria-invalid={!!problem}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </Field>
+        <ErrorNote>{m.error?.message}</ErrorNote>
+        {m.isSuccess && <p className="muted">Saved.</p>}
+        <Button type="submit" variant="primary" disabled={m.isPending || !!problem}>
+          Save
+        </Button>
+      </form>
+    </section>
   );
 }

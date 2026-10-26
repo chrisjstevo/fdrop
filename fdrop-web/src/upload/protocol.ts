@@ -6,6 +6,8 @@ export interface StartMessage {
   file: File;
   path: string;
   overwrite: boolean;
+  /** The expiry to give the file ("6 days", "never"), or undefined for the folder's default. */
+  expiresIn?: string;
   csrf?: string;
   maxParallel: number;
   hashMax: number;

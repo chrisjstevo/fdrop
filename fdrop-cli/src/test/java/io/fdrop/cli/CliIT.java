@@ -172,6 +172,26 @@ class CliIT {
     }
 
     @Test
+    void expiresIn() throws Exception {
+        Path f = file("nightly.csv", 2_000);
+        assertThat(cli(upload(url, f, "/home/", "--expires-in", "2weeks", "--json"))).as(err).isZero();
+        assertThat(out).contains("\"expiresIn\":\"2 weeks\"").contains("\"expiresAt\":");
+        assertThat(app.files.stat(io.fdrop.core.TestSupport.app("app-cli"), "/home/nightly.csv").expiresIn())
+                .isEqualTo("2 weeks");
+
+        // checked before connecting, with the server's message
+        assertThat(cli(upload(url, f, "/home/other.csv", "--expires-in", "6 dys"))).isEqualTo(CliException.USAGE);
+        assertThat(err).contains("Unknown unit 'dys'");
+
+        // limits are the server's: a folder maximum refuses a longer value
+        String shared = app.folderService.create(alice, FolderType.SHARED, "Short", null, null).id();
+        app.folderService.putMember(alice, shared, "app-cli", Permission.WRITE);
+        app.folderService.updateExpiry(alice, shared, null, "7 days", false);
+        assertThat(cli(upload(url, f, "/shared/Short/", "--expires-in", "30 days"))).isEqualTo(CliException.USAGE);
+        assertThat(err).contains("this folder's maximum of '7 days'");
+    }
+
+    @Test
     void refusals() throws Exception {
         Path f = file("x.bin", 100);
         String ro = app.folderService.create(alice, FolderType.SHARED, "ReadOnly", null, null).id();

@@ -17,6 +17,8 @@ export interface QueueItem {
   /** The forward folder this went to, so the row can show forward status after upload. */
   forward: boolean;
   uploadId?: string;
+  /** The expiry chosen for this file, if any. */
+  expiresIn?: string;
 }
 
 export interface Settings {
@@ -84,7 +86,7 @@ export class UploadQueue {
   }
 
   /** Queues a file for upload to `path`. Resumes an earlier session for the same file if one is pending. */
-  add(file: File, path: string, opts: { overwrite?: boolean; forward?: boolean } = {}): string {
+  add(file: File, path: string, opts: { overwrite?: boolean; forward?: boolean; expiresIn?: string } = {}): string {
     const resume = matchPending(this.pending, file);
     const key = resume?.key ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     if (resume) {
@@ -103,6 +105,7 @@ export class UploadQueue {
       secondsLeft: Number.POSITIVE_INFINITY,
       forward: opts.forward ?? path.startsWith("/forward/"),
       uploadId: resume?.uploadId,
+      expiresIn: opts.expiresIn,
     });
     if (!this.order.includes(key)) {
       this.order.unshift(key);
@@ -114,6 +117,7 @@ export class UploadQueue {
       file,
       path: resume?.path ?? path,
       overwrite: !!opts.overwrite,
+      expiresIn: opts.expiresIn,
       csrf: getCsrfToken(),
       maxParallel: this.settings.maxParallelChunks,
       hashMax: this.settings.clientHashMax,

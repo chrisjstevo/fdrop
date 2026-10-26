@@ -4,11 +4,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.fdrop.core.Fdrop;
 import io.fdrop.core.audit.Audit;
 import io.fdrop.core.error.FdropException;
+import io.fdrop.core.expiry.Expiry;
+import io.fdrop.core.model.Enums.ExpirySource;
 import io.fdrop.core.model.Enums.Via;
 import io.fdrop.core.model.Records.UploadSession;
 import io.fdrop.core.service.FileService;
+import io.fdrop.core.service.ExpiryService;
 import io.fdrop.core.service.FileService.Entry;
 import io.fdrop.core.service.UploadService;
+import io.fdrop.core.service.VirtualPath;
 import io.fdrop.http.Ctx;
 import io.fdrop.http.Response;
 import io.fdrop.http.Router;
@@ -23,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -45,6 +50,7 @@ public final class FilesApi {
         r.post("/api/v1/files/mkdir", this::mkdir);
         r.post("/api/v1/files/move", this::move);
         r.delete("/api/v1/files", this::delete);
+        r.patch("/api/v1/files", this::changeExpiry);
 
         r.post("/api/v1/uploads", this::createUpload);
         r.get("/api/v1/uploads/{id}", this::uploadStatus);
@@ -64,7 +70,66 @@ public final class FilesApi {
         if (e.folderId() != null) {
             m.put("folderId", e.folderId());
         }
+        if (e.type() == FileService.EntryType.FILE) {
+            m.put("expiresAt", e.expiresAt() == null ? null : Instant.ofEpochMilli(e.expiresAt()).toString());
+            m.put("expiresIn", e.expiresIn());
+            m.put("expirySource", source(e.expirySource()));
+        }
         return m;
+    }
+
+    /** {@code FOLDER_DEFAULT} → {@code folderDefault}. */
+    static String source(ExpirySource s) {
+        if (s == null) {
+            return null;
+        }
+        String[] parts = s.name().toLowerCase(Locale.ROOT).split("_");
+        StringBuilder b = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            b.append(Character.toUpperCase(parts[i].charAt(0))).append(parts[i].substring(1));
+        }
+        return b.toString();
+    }
+
+    /** What an upload into this folder gets, so the UI can show it without another call. */
+    private Map<String, Object> folderExpiry(Ctx ctx, String path) {
+        VirtualPath vp = app.files.resolver().resolve(ctx.principal(), path);
+        if (vp.isSynthetic()) {
+            return null;
+        }
+        ExpiryService.Policy pol = app.expiry.policy(vp);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("enabled", app.expiry.enabled());
+        m.put("allowed", pol.allowed() && app.expiry.enabled());
+        m.put("default", pol.defaultExpiry() == null ? null : pol.defaultExpiry().canonical());
+        m.put("max", pol.areaMax() == null ? null : pol.areaMax().canonical());
+        m.put("serverMax", app.expiry.serverMax().canonical());
+        return m;
+    }
+
+    /** The expiry given with an upload, from a body field, the query or the header; two different ones are refused. */
+    private String expiryInput(Ctx ctx, String fromBody) {
+        String header = ctx.header("X-Fdrop-Expires-In");
+        String query = ctx.query("expiresIn");
+        String value = null;
+        for (String v : new String[]{fromBody, query, header}) {
+            if (v == null) {
+                continue;
+            }
+            if (value != null && !sameExpiry(value, v)) {
+                throw app.expiry.conflicting(ctx.principal(), Via.HTTP, value, v);
+            }
+            value = value == null ? v : value;
+        }
+        return value;
+    }
+
+    private static boolean sameExpiry(String a, String b) {
+        try {
+            return Expiry.parse(a).equals(Expiry.parse(b));
+        } catch (FdropException e) {
+            return a.strip().equalsIgnoreCase(b.strip());
+        }
     }
 
     private Response list(Ctx ctx) {
@@ -75,6 +140,7 @@ public final class FilesApi {
         out.put("path", self.path());
         out.put("self", entry(self));
         out.put("entries", entries.stream().map(FilesApi::entry).toList());
+        out.put("folderExpiry", self.directory() ? folderExpiry(ctx, self.path()) : null);
         return Response.json(out);
     }
 
@@ -88,6 +154,9 @@ public final class FilesApi {
         h.set("Cache-Control", "private, no-cache");
         h.set("Content-Type", "application/octet-stream");
         h.set("Content-Disposition", disposition(t.path().name()));
+        if (t.expiresAt() != null) {
+            h.set("X-Fdrop-Expires-At", Instant.ofEpochMilli(t.expiresAt()).toString());
+        }
         if (t.info().lastModified() != null) {
             h.set("Last-Modified", java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
                     t.info().lastModified().atZone(java.time.ZoneOffset.UTC)));
@@ -142,7 +211,7 @@ public final class FilesApi {
                     + " bytes; use the resumable upload API for larger files");
         }
         try (FileService.FileWrite w = app.files.openWrite(ctx.principal(), path, length, ctx.queryBool("overwrite"),
-                Via.HTTP, ctx.clientIp())) {
+                Via.HTTP, ctx.clientIp(), expiryInput(ctx, null))) {
             ReadableByteChannel body = ctx.bodyChannel();
             ByteBuffer buf = ByteBuffer.allocate(64 * 1024);
             long total = 0;
@@ -178,7 +247,41 @@ public final class FilesApi {
 
     private Response move(Ctx ctx) {
         JsonNode b = ctx.jsonTree();
-        return Response.json(entry(app.files.move(ctx.principal(), text(b, "from"), text(b, "to"))));
+        FileService.Moved moved = app.files.moveWithExpiry(ctx.principal(), text(b, "from"), text(b, "to"));
+        Map<String, Object> m = entry(moved.entry());
+        m.put("expiryShortened", moved.expiryShortened());
+        return Response.json(m);
+    }
+
+    /** {@code PATCH /api/v1/files?path=…}: {@code expiresIn} (a duration from now, or never) or {@code expiresAt}. */
+    private Response changeExpiry(Ctx ctx) {
+        String path = ctx.requireQuery("path");
+        JsonNode b = ctx.jsonTree();
+        ExpiryService.Change change;
+        if (b.has("expiresAt")) {
+            if (b.has("expiresIn")) {
+                throw FdropException.badRequest("give either expiresIn or expiresAt, not both")
+                        .withType(Expiry.PROBLEM_CONFLICTING);
+            }
+            JsonNode at = b.get("expiresAt");
+            if (at.isNull()) {
+                change = ExpiryService.Change.clear();
+            } else {
+                try {
+                    change = new ExpiryService.Change(null, Instant.parse(at.asText()));
+                } catch (java.time.format.DateTimeParseException e) {
+                    throw FdropException.badRequest("expiresAt must be an RFC 3339 time such as"
+                            + " 2026-11-30T17:00:00Z").withType(Expiry.PROBLEM_INVALID);
+                }
+            }
+        } else if (b.has("expiresIn")) {
+            change = b.get("expiresIn").isNull() ? ExpiryService.Change.clear()
+                    : new ExpiryService.Change(b.get("expiresIn").asText(), null);
+        } else {
+            throw FdropException.badRequest("give expiresIn or expiresAt");
+        }
+        app.expiry.change(ctx.principal(), path, change, Via.HTTP, "user");
+        return Response.json(entry(app.files.stat(ctx.principal(), path)));
     }
 
     private Response delete(Ctx ctx) {
@@ -205,6 +308,7 @@ public final class FilesApi {
         m.put("chunkCount", s.chunkCount());
         m.put("state", s.state().name());
         m.put("expiresAt", Instant.ofEpochMilli(s.expiresAt()).toString());
+        m.put("fileExpiresIn", s.expiresIn());
         if (s.error() != null) {
             m.put("error", s.error());
         }
@@ -219,7 +323,8 @@ public final class FilesApi {
         UploadService.CreateRequest req = new UploadService.CreateRequest(text(b, "path"), b.get("size").asLong(),
                 b.hasNonNull("lastModified") ? b.get("lastModified").asLong() : null,
                 b.hasNonNull("sha256") ? b.get("sha256").asText() : null,
-                b.path("overwrite").asBoolean(false));
+                b.path("overwrite").asBoolean(false),
+                expiryInput(ctx, b.hasNonNull("expiresIn") ? b.get("expiresIn").asText() : null));
         UploadSession s = app.uploadService.create(ctx.principal(), req, ctx.clientIp());
         HttpHeaders h = Response.newHeaders();
         h.set("Location", "/api/v1/uploads/" + s.id());

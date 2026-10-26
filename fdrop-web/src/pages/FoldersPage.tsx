@@ -6,6 +6,7 @@ import { del, get, patch, post, put, q } from "../api/client";
 import type { DestinationOption, FolderView, ForwardJob, MemberView, UserMatch } from "../api/types";
 import { useMe } from "../auth/useMe";
 import { Badge, Button, Dialog, DialogActions, Empty, ErrorNote, Field, LinkButton, RowMenu } from "../components/ui";
+import { expiryProblem, longerThan, parseExpiry } from "../util/expiry";
 import { formatBytes, formatDate } from "../util/format";
 import { filesLink } from "./FilesPage";
 import { JobBadge } from "./status";
@@ -307,6 +308,14 @@ export function FolderDetailPage() {
             <dd>{f.keepDays ? `Kept for ${f.keepDays} days` : "Deleted from fdrop"}</dd>
           </>
         )}
+        {f.type === "SHARED" && (
+          <>
+            <dt>Default expiry</dt>
+            <dd>{f.defaultExpiry ?? (f.maxExpiry ? `The maximum, ${f.maxExpiry}` : "Files never expire")}</dd>
+            <dt>Maximum expiry</dt>
+            <dd>{f.maxExpiry ?? "None"}</dd>
+          </>
+        )}
       </dl>
 
       {isOwner && <SettingsPanel folder={f} onSaved={refresh} />}
@@ -403,17 +412,32 @@ function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () =>
   const [name, setName] = useState(folder.name);
   const [destination, setDestination] = useState(folder.destinationId ?? "");
   const [keepDays, setKeepDays] = useState(folder.keepDays ?? 0);
+  const [defaultExpiry, setDefaultExpiry] = useState(folder.defaultExpiry ?? "");
+  const [maxExpiry, setMaxExpiry] = useState(folder.maxExpiry ?? "");
+  const [applyToExisting, setApplyToExisting] = useState(false);
   const dests = useQuery({
     queryKey: ["destinations-mine"],
     enabled: folder.type === "FORWARD",
     queryFn: () => get<DestinationOption[]>("/api/v1/forward-destinations"),
   });
+  const shared = folder.type === "SHARED";
+  const defaultProblem = defaultExpiry.trim() ? expiryProblem(defaultExpiry) : undefined;
+  const maxProblem = maxExpiry.trim() ? expiryProblem(maxExpiry) : undefined;
+  const orderProblem =
+    !defaultProblem && !maxProblem && defaultExpiry.trim() && maxExpiry.trim()
+      && longerThan(parseExpiry(defaultExpiry), parseExpiry(maxExpiry))
+      ? "The default can't be longer than the maximum"
+      : undefined;
+  const maxChanged = shared && maxExpiry.trim() !== (folder.maxExpiry ?? "") && !!maxExpiry.trim();
   const m = useMutation({
     mutationFn: () =>
-      patch(`/api/v1/folders/${q(folder.id)}`, {
+      patch<{ expiryFilesChanged?: number }>(`/api/v1/folders/${q(folder.id)}`, {
         name: name.trim(),
         destinationId: folder.type === "FORWARD" ? destination : undefined,
         keepDays: folder.type === "FORWARD" ? keepDays : undefined,
+        defaultExpiry: shared && defaultExpiry.trim() !== (folder.defaultExpiry ?? "") ? defaultExpiry.trim() : undefined,
+        maxExpiry: shared && maxExpiry.trim() !== (folder.maxExpiry ?? "") ? maxExpiry.trim() : undefined,
+        applyToExisting: maxChanged && applyToExisting ? true : undefined,
       }),
     onSuccess: onSaved,
   });
@@ -450,9 +474,52 @@ function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () =>
             </Field>
           </div>
         )}
+        {shared && (
+          <div className={s.formRow}>
+            <Field
+              label="Default expiry"
+              htmlFor="settings-default-expiry"
+              hint={defaultProblem ?? "Files uploaded without an expiry are deleted this long after they arrive, e.g. 7 days. Empty: never."}
+            >
+              <input
+                id="settings-default-expiry"
+                type="text"
+                placeholder="never"
+                value={defaultExpiry}
+                aria-invalid={!!defaultProblem}
+                onChange={(e) => setDefaultExpiry(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Maximum expiry"
+              htmlFor="settings-max-expiry"
+              hint={maxProblem ?? orderProblem ?? "When set, every file in this folder is deleted within this time. Empty: no maximum."}
+            >
+              <input
+                id="settings-max-expiry"
+                type="text"
+                placeholder="none"
+                value={maxExpiry}
+                aria-invalid={!!maxProblem || !!orderProblem}
+                onChange={(e) => setMaxExpiry(e.target.value)}
+              />
+            </Field>
+          </div>
+        )}
+        {maxChanged && (
+          <label className={s.checkbox}>
+            <input type="checkbox" checked={applyToExisting} onChange={(e) => setApplyToExisting(e.target.checked)} />
+            Also shorten the expiry of files already in this folder that would outlive the new maximum
+          </label>
+        )}
         <ErrorNote>{m.error?.message}</ErrorNote>
-        {m.isSuccess && <p className="muted">Saved.</p>}
-        <Button type="submit" variant="primary" disabled={m.isPending}>
+        {m.isSuccess && (
+          <p className="muted">
+            Saved.
+            {m.data?.expiryFilesChanged ? ` ${m.data.expiryFilesChanged} files now expire sooner.` : ""}
+          </p>
+        )}
+        <Button type="submit" variant="primary" disabled={m.isPending || !!defaultProblem || !!maxProblem || !!orderProblem}>
           Save settings
         </Button>
       </form>

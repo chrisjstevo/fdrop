@@ -1,9 +1,14 @@
 .head {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   gap: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.head > .actions {
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .head h1 {
@@ -16,6 +21,7 @@
 .actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
 }
 
@@ -36,12 +42,11 @@
 
 .table th {
   text-align: left;
-  font-size: var(--text-label);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-muted);
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-line);
   white-space: nowrap;
 }
 
@@ -57,13 +62,14 @@
 }
 
 .table td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--color-divider);
+  height: 56px;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-line);
   vertical-align: middle;
 }
 
-.table tbody tr:nth-child(even) {
-  background: var(--color-surface-alt);
+.table tbody tr:hover {
+  background: var(--color-hover);
 }
 
 .table tr.dropRow:hover {
@@ -84,11 +90,21 @@
   overflow-wrap: anywhere;
 }
 
+/* A file or folder icon on a soft rounded tile. */
 .icon {
   flex: none;
-  width: 20px;
-  text-align: center;
-  color: var(--color-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-nav);
+  background: var(--color-tile);
+  color: var(--color-ink);
+  display: inline-grid;
+  place-items: center;
+}
+
+.iconForward {
+  background: var(--color-navy-deep);
+  color: #fff;
 }
 
 .nameCell a {
@@ -111,9 +127,9 @@
 .card {
   display: flex;
   gap: var(--space-3);
-  align-items: flex-start;
+  align-items: center;
   padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-line);
 }
 
 .cardBody {
@@ -249,4 +265,84 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   margin: var(--space-2) 0;
+}
+
+/* Section headings inside a page: small capitals, as in the sidebar. */
+.label {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-label);
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* Recent files on Home: a row of cards. */
+.recent {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  text-decoration: none;
+  min-width: 0;
+}
+
+.tile:hover {
+  border-color: var(--color-ink);
+}
+
+.tileArt {
+  height: 88px;
+  border-radius: var(--radius-nav);
+  background: var(--color-tile);
+  display: grid;
+  place-items: center;
+}
+
+.tileName {
+  font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileMeta {
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+.titleBlock {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.titleBlock h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Phones: recent files become a short row that scrolls sideways inside itself. */
+@media (max-width: 639px) {
+  .recent {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 62%;
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+
+  .tileArt {
+    height: 56px;
+  }
 }

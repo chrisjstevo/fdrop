@@ -70,12 +70,10 @@
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  .primary {
-    background: #fff;
-    border-color: #fff;
-    color: #171739;
-  }
+:global(:root[data-theme="dark"]) .primary {
+  background: #fff;
+  border-color: #fff;
+  color: #171739;
 }
 
 .badge {
@@ -121,11 +119,9 @@
   color: var(--color-ink);
 }
 
-@media (prefers-color-scheme: dark) {
-  .badge_forward {
-    background: #fff;
-    color: #171739;
-  }
+:global(:root[data-theme="dark"]) .badge_forward {
+  background: #fff;
+  color: #171739;
 }
 
 .progress {
@@ -316,9 +312,10 @@
   flex-wrap: wrap;
   gap: var(--space-1);
   list-style: none;
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-1);
   padding: 0;
   font-size: var(--text-small);
+  color: var(--color-muted);
 }
 
 .crumbs li + li::before {
@@ -328,5 +325,11 @@
 }
 
 .crumbs a {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+
+.crumbs a:hover {
   color: var(--color-ink);
+  text-decoration: underline;
 }

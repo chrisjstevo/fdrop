@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Forward folders end to end against an in-process SFTP destination with public-key auth only. */
 class ForwardWorkerTest {
@@ -144,6 +145,26 @@ class ForwardWorkerTest {
         ForwardJob dup = run(drop(d, "Out", "invoice-1.pdf", "other"));
         assertThat(dup.state()).isEqualTo(JobState.FAILED);
         assertThat(dup.lastError()).contains("already exists");
+    }
+
+    @Test
+    void keptFilesExpireTheirKeepDaysAfterSending() throws Exception {
+        DestinationService.AdminView d = destination(null);
+        FolderService.FolderView f = app.folderService.create(alice, FolderType.FORWARD, "Kept",
+                d.destination().id(), 3);
+        // forward folders take no per-file expiry
+        assertThatThrownBy(() -> app.files.openWrite(alice, "/forward/Kept/x.pdf", 1, false, Via.HTTP, null,
+                "1 day")).isInstanceOfSatisfying(io.fdrop.core.error.FdropException.class,
+                e -> assertThat(e.type()).isEqualTo("expiry-not-allowed"));
+        ForwardJob j = drop(d, "Kept", "kept.pdf", "kept");
+        assertThat(app.files.stat(alice, "/forward/Kept/kept.pdf").expiresAt()).isNull();
+        ForwardJob after = run(j);
+        assertThat(after.state()).isEqualTo(JobState.SENT);
+        FileService.Entry e = app.files.stat(alice, "/forward/Kept/kept.pdf");
+        assertThat(e.expiresIn()).isEqualTo("3 days");
+        assertThat(e.expirySource()).isEqualTo(io.fdrop.core.model.Enums.ExpirySource.FORWARD_KEEP);
+        assertThat(e.expiresAt()).isEqualTo(after.sentAt() + java.time.Duration.ofDays(3).toMillis());
+        assertThat(f.keepDays()).isEqualTo(3);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package io.fdrop.core.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ public class FdropConfig {
     public Forward forward = new Forward();
     public Storage storage = new Storage();
     public Upload upload = new Upload();
+    public FileExpiry expiry = new FileExpiry();
     public Db db = new Db();
     public Limits limits = new Limits();
 
@@ -175,6 +177,36 @@ public class FdropConfig {
         public int maxParallelChunks = 3;
         public String historyRetention = "365d";
         public DataSize clientHashMax = DataSize.ofGiB(2);
+    }
+
+    /** File expiry (see "File expiry" in SPEC.md). {@code max} and {@code home.*} use the expiry syntax. */
+    public static class FileExpiry {
+        /** False refuses new expiries and hides the UI controls; existing expiries still run. */
+        public boolean enabled = true;
+        /** Longest expiry anyone can set, and the cap on folder and home settings (at most 100y). */
+        public String max = "10y";
+        public ExpiryHome home = new ExpiryHome();
+        public String sweepInterval = "30s";
+        public int batchSize = 500;
+        /** A claim not finished by then is taken over by another node. */
+        public String claimTimeout = "5m";
+        public int maxDeletesPerSecond = 200;
+        public ExpirySftp sftp = new ExpirySftp();
+    }
+
+    public static class ExpiryHome {
+        /** Expiry for /home uploads when the user has set no default; null means never. */
+        @JsonProperty("default")
+        public String defaultExpiry;
+        /** Longest expiry in any /home; when set, every /home file expires. */
+        public String max;
+    }
+
+    public static class ExpirySftp {
+        /** Control file suffix; reserved on every protocol. */
+        public String suffix = ".fdrop-expires";
+        /** How long a control file written before its file is kept. */
+        public String pendingFor = "10m";
     }
 
     public static class Db {

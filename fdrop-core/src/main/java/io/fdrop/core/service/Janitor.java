@@ -14,7 +14,6 @@ import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.UploadState;
 import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.Folder;
-import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardDestination;
 import io.fdrop.core.model.Records.ForwardJob;
 import io.fdrop.core.model.Records.UploadSession;
@@ -34,8 +33,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Background housekeeping: expiring abandoned uploads (every 15 min), pruning old sessions and My uploads rows
- * past {@code upload.historyRetention} (hourly), deleting forwarded files past their folder's keep days, and
- * refreshing the count gauges for {@code /metrics} (every 30 s) so scrapes never touch the DB.
+ * past {@code upload.historyRetention} (hourly), and refreshing the count gauges for {@code /metrics} (every 30 s) so scrapes never touch the DB.
  */
 public final class Janitor implements AutoCloseable {
 
@@ -116,15 +114,6 @@ public final class Janitor implements AutoCloseable {
         int pruned = records.deleteOlderThan(now - Durations.parse(cfg.upload.historyRetention).toMillis());
         if (pruned > 0) {
             log.info("pruned {} My uploads rows past retention", pruned);
-        }
-        for (Folder f : folders.visibleToAll(FolderType.FORWARD)) {
-            Optional<FolderForward> ff = folders.forward(f.id());
-            if (ff.isEmpty() || ff.get().keepDays() <= 0) {
-                continue;
-            }
-            for (ForwardJob j : records.sentBefore(f.id(), now - Duration.ofDays(ff.get().keepDays()).toMillis())) {
-                deleteForwarded(f, j);
-            }
         }
     }
 

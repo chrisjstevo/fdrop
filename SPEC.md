@@ -4,7 +4,7 @@ Oct 22, 2026 · Living version: [fdrop — Technical Specification](https://clau
 
 ## Overview
 
-fdrop is a single JVM service that lets users upload and download files through a browser (HTTP) or an SFTP client, with every file stored in a pluggable backend: the local file system or Amazon S3 (and S3-compatible stores). Browser uploads are split into chunks so a dropped connection resumes from the last acknowledged chunk instead of restarting. Users keep private files, collaborate in shared folders, and drop files into forward folders that fdrop relays to another SFTP server; admins create and delete users, create application accounts that let other systems exchange files over mTLS or a password (with `fdrop`, a Java command line client, for unattended uploads), and define the forwarding destinations each user may use.
+fdrop is a single JVM service that lets users upload and download files through a browser (HTTP) or an SFTP client, with every file stored in a pluggable backend: the local file system or Amazon S3 (and S3-compatible stores). Browser uploads are split into chunks so a dropped connection resumes from the last acknowledged chunk instead of restarting. Any file can be given an expiry (`6 days`, `2weeks`), after which fdrop deletes it. Users keep private files, collaborate in shared folders, and drop files into forward folders that fdrop relays to another SFTP server; admins create and delete users, create application accounts that let other systems exchange files over mTLS or a password (with `fdrop`, a Java command line client, for unattended uploads), and define the forwarding destinations each user may use.
 
 ### Goals
 
@@ -148,24 +148,25 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8080; 8443 with TLS)
 | GET | `/auth/callback` | OIDC redirect target; creates the session cookie |
 | POST | `/auth/logout` | End session and redirect to Keycloak end-session endpoint |
 | POST | `/auth/backchannel-logout` | Keycloak back-channel logout (logout token) |
-| GET | `/api/v1/me` | Current user: username, roles, quota, usage, two-factor status |
+| GET/PATCH | `/api/v1/me` | Current user: username, roles, quota, usage, two-factor status, home default expiry; `PATCH` changes the home default expiry |
 | DELETE | `/api/v1/me/two-factor/{credentialId}` | Remove one of the user's own second factors (needs a two-factor session; the last required factor cannot be removed) |
 | GET/POST/DELETE | `/api/v1/me/ssh-keys` | Manage the user's SFTP public keys |
 | GET | `/api/v1/me/uploads?wentTo=&q=&from=&to=&sort=&cursor=` | The My uploads list: the user's own upload records, filtered, sorted and paged, with count and total size for the filter |
-| GET | `/api/v1/files?path=/home/docs` | List a directory in the virtual tree (name, size, mtime, type) |
+| GET | `/api/v1/files?path=/home/docs` | List a directory in the virtual tree (name, size, mtime, type, `expiresAt`, `expirySource`), with the folder's default and maximum expiry |
 | GET | `/api/v1/files/content?path=…` | Download; supports `Range`, `If-None-Match`, `Content-Disposition: attachment` |
-| PUT | `/api/v1/files/content?path=…` | Simple single-request upload for files ≤ `http.simpleUploadMax` (default 64 MiB) |
+| PUT | `/api/v1/files/content?path=…&expiresIn=…` | Simple single-request upload for files ≤ `http.simpleUploadMax` (default 64 MiB), optionally with an expiry (or header `X-Fdrop-Expires-In`; see File expiry) |
+| PATCH | `/api/v1/files?path=…` | Set, change or clear a file's expiry (`expiresIn` or `expiresAt`) |
 | POST | `/api/v1/files/mkdir` | Create an ordinary sub-folder in `/home` or a shared folder |
-| POST | `/api/v1/files/move` | Rename or move |
+| POST | `/api/v1/files/move` | Rename or move; the expiry moves with the file |
 | DELETE | `/api/v1/files?path=…` | Delete file or empty directory |
-| POST | `/api/v1/uploads` | Start a resumable upload |
+| POST | `/api/v1/uploads` | Start a resumable upload, optionally with an expiry (`expiresIn`) |
 | GET | `/api/v1/uploads/{id}` | Upload status and received chunks |
 | PUT | `/api/v1/uploads/{id}/chunks/{index}` | Upload one chunk |
 | POST | `/api/v1/uploads/{id}/complete` | Assemble chunks into the final file |
 | DELETE | `/api/v1/uploads/{id}` | Abort and discard |
 | GET | `/api/v1/folders` | Shared and forward folders the user owns or belongs to |
 | POST | `/api/v1/folders` | Create a shared folder, or a forward folder with a `destinationId` from the user's assigned list |
-| GET/PATCH/DELETE | `/api/v1/folders/{id}` | Read, rename, switch destination, change keep days, delete (owner) |
+| GET/PATCH/DELETE | `/api/v1/folders/{id}` | Read, rename, switch destination, change keep days, change default and maximum expiry, delete (owner) |
 | PUT/DELETE | `/api/v1/folders/{id}/members/{username}` | Add or change a member's permission, remove a member (owner; a member may remove themselves) |
 | POST | `/api/v1/folders/{id}/owner` | Transfer ownership to a member |
 | GET | `/api/v1/folders/{id}/forward-jobs` | Forward job status for the folder |
@@ -176,7 +177,7 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8080; 8443 with TLS)
 | DELETE | `/api/v1/admin/users/{id}` | Delete a user (admin) |
 | POST | `/api/v1/admin/users/{id}/two-factor/reset` | Delete a user's second factors and end their sessions (admin) |
 | GET/POST | `/api/v1/admin/app-accounts` | List or create application accounts (admin) |
-| GET/PATCH/DELETE | `/api/v1/admin/app-accounts/{id}` | Read, change description, responsible person, allowed methods and source addresses, enable/disable, delete (admin) |
+| GET/PATCH/DELETE | `/api/v1/admin/app-accounts/{id}` | Read, change description, responsible person, allowed methods and source addresses, home default expiry, enable/disable, delete (admin) |
 | POST | `/api/v1/admin/app-accounts/{id}/password` | Generate a new password, returned once (admin) |
 | POST/DELETE | `/api/v1/admin/app-accounts/{id}/certificates[/{certId}]` | Add a pinned or by-subject client certificate, or retire one (admin) |
 | POST/DELETE | `/api/v1/admin/app-accounts/{id}/ssh-keys[/{keyId}]` | Add or remove an SSH public key or user certificate (admin) |
@@ -187,14 +188,14 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8080; 8443 with TLS)
 | PUT/DELETE | `/api/v1/admin/forward-destinations/{id}/assignments/{username}` | Assign a destination to a user or remove the assignment (admin) |
 | GET | `/healthz`, `/readyz`, `/metrics` | Not on this port: served on the management port (8081); see Observability |
 
-Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`). Downloads use `DefaultFileRegion` (zero-copy) for the local backend without TLS, and `ChunkedNioStream` over the backend channel otherwise; `Range` requests return 206 with one range (multi-range returns 200 with the full body).
+Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`); expiry problems (`invalid-expiry`, `expiry-too-long`, `expiry-not-allowed`, `conflicting-expiry`, `reserved-name`) are listed under File expiry. Downloads use `DefaultFileRegion` (zero-copy) for the local backend without TLS, and `ChunkedNioStream` over the backend channel otherwise; `Range` requests return 206 with one range (multi-range returns 200 with the full body).
 
 ### Browser UI
 
 - Built with React 19 and TypeScript; no hand-written DOM JavaScript or other UI framework. Function components and hooks only.
 - Built with npm: `package.json` and a committed `package-lock.json` in `fdrop-web`; `npm ci` installs, `npm run build` produces the bundle with Vite, `npm test` runs Vitest. The output is bundled into the jar as static resources; no server-side rendering.
 - Libraries: React Router for navigation, TanStack Query for API calls and caching; no global state library unless a need appears.
-- File browser: breadcrumb, list view, a drop zone for drag-and-drop upload (below), a file picker button, download, rename, delete, new folder.
+- File browser: breadcrumb, list view, a drop zone for drag-and-drop upload (below), a file picker button, download, rename, delete, new folder, and each file's expiry with a Set expiry action (see File expiry).
 - Upload queue panel showing each file's percentage, bytes sent, speed and time remaining, with pause/resume/cancel and a retry state when offline (below).
 - Uploads run in a Web Worker using `Blob.slice()` and `XMLHttpRequest` (which, unlike `fetch`, reports upload progress events), up to 3 chunks in parallel per file; React components subscribe to worker progress through a small hook (`useUploadQueue`).
 - In-progress uploads are recorded in IndexedDB (upload id, file name, size, `lastModified`, chunk size) so a reload offers to resume once the user re-selects the same file.
@@ -203,7 +204,7 @@ Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`). Download
 
 ### Drag-and-drop drop zone
 
-- Every writable folder view (`/home` and its sub-folders, shared folders with write access, forward folders) shows a drop zone: a dashed area above the file list, with the fdrop logo mark as a faint background, reading "Drop files here or choose files", which also works as a button that opens the file picker.
+- Every writable folder view (`/home` and its sub-folders, shared folders with write access, forward folders) shows a drop zone: a dashed strip below the file list, with the fdrop logo mark as a faint background, reading "Drop files anywhere, or choose files, to upload to <folder>", which also works as a button that opens the file picker. The sidebar's Upload button opens the same picker for the folder being shown.
 - While files are dragged over the window, the whole file list becomes the drop target, highlighted, and names the folder the files will land in ("Drop to upload to /shared/Invoices"). Dropping on a sub-folder row uploads into that sub-folder.
 - Dropping a folder uploads its contents with their sub-folder structure (via `DataTransferItem.webkitGetAsEntry()`), creating the sub-folders first. Forward folders accept files only; a dropped folder there is refused with a message.
 - Many files can be dropped at once; each becomes its own entry in the upload queue. Files over `limits.maxFileSize` or beyond the user's remaining quota are rejected at drop time with the reason shown, before any bytes are sent.
@@ -224,7 +225,7 @@ Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`). Download
 
 ### My uploads page
 
-Every user has a **My uploads** page, reached from the main navigation, listing every file they have uploaded: its name, its size, and whether it went to a normal folder or a forward folder. It covers uploads over both the browser and SFTP, and keeps a row after the file has been forwarded, moved or deleted.
+Every user has a **My uploads** page, reached from the main navigation, listing every file they have uploaded: its name, its size, and whether it went to a normal folder or a forward folder. It covers uploads over both the browser and SFTP, and keeps a row after the file has been forwarded, moved, deleted or expired.
 
 | Column | Shows |
 | --- | --- |
@@ -234,7 +235,8 @@ Every user has a **My uploads** page, reached from the main navigation, listing 
 | Uploaded | Date and time the upload completed, in the user's time zone |
 | Via | Browser or SFTP |
 | From IP | IP address of the machine that uploaded the file (IPv4, or IPv6 in compressed form). If a resumable upload was started from one address and finished from another, the finishing address is shown with "started from 203.0.113.7" beneath it |
-| Status | Folder uploads: Stored, Moved or Deleted. Forward uploads: Queued, Sending, Sent, Failed or Paused, the same states as the forward job |
+| Expires | The expiry the file was given, as a date and time in the user's time zone, or nothing |
+| Status | Folder uploads: Stored, Moved, Deleted or Expired. Forward uploads: Queued, Sending, Sent, Failed or Paused, the same states as the forward job |
 
 - Newest first by default; sortable by date, size and name.
 - Filters: Went to (All, Folders, Forward), date range, and a search box that matches file names or an IP address (exact, or a prefix such as `10.20.`).
@@ -249,7 +251,7 @@ Every user has a **My uploads** page, reached from the main navigation, listing 
 - **Privacy.** IP addresses are personal data. Users see only the addresses on their own uploads; the address is kept no longer than the row (`upload.historyRetention`), is deleted with a deleted user's rows, and never appears in metrics labels.
 - Rows older than `upload.historyRetention` (default 365 days) are deleted by the nightly janitor. A deleted user's rows are deleted with them.
 
-**Data.** When an upload completes (resumable `complete`, simple `PUT`, or an SFTP write handle closed), fdrop writes one `upload_record` row, including the client IP addresses. Moves, renames and deletes update its current path and status, and forward jobs link to it so its status follows the job. The page reads only from this table, so it stays fast regardless of storage backend.
+**Data.** When an upload completes (resumable `complete`, simple `PUT`, or an SFTP write handle closed), fdrop writes one `upload_record` row, including the client IP addresses. Moves, renames, deletes and expiry update its current path, expiry and status, and forward jobs link to it so its status follows the job. The page reads only from this table, so it stays fast regardless of storage backend.
 
 ### Responsive web app
 
@@ -259,10 +261,10 @@ The UI is one responsive web app that works on phones, tablets and desktops from
 | --- | --- |
 | Under 640 px (phone) | Single column; navigation in a menu button; files as list rows (name, size, date) with actions in an overflow menu; upload queue as a bottom sheet |
 | 640–1024 px (tablet) | Navigation as a collapsible drawer; files as a compact table; dialogs as side panels |
-| Over 1024 px (desktop) | Fixed sidebar (Home, Shared, Forward, My uploads, Admin); full file table with sortable columns; upload queue as a docked panel |
+| Over 1024 px (desktop) | Workspace layout: a light fixed sidebar (logo, Upload and New folder, Home, Shared, Forward, My uploads, Manage folders, an Admin group, storage meter) beside a white top bar with folder search and the account menu; full file table with sortable columns; upload queue as a docked panel |
 
 - Mobile-first CSS with breakpoints at 640 px and 1024 px, and container queries for components such as the file table and upload queue; usable down to 320 px wide with no horizontal page scrolling.
-- Styling with CSS Modules and CSS custom properties for theme tokens (light and dark follow the system setting; see Visual design); Radix UI primitives for accessible menus, dialogs and drop-downs, including the forward destination drop-down.
+- Styling with CSS Modules and CSS custom properties for theme tokens (light and dark follow the system setting until the user picks one with the switch in the top bar; see Visual design); Radix UI primitives for accessible menus, dialogs and drop-downs, including the forward destination drop-down.
 - Touch: tap targets at least 44 × 44 px; the drop zone accepts drag-and-drop wherever the device supports it (desktop, and tablets with drag such as iPad), and is always also a button that opens the file picker, including the phone's photo library and camera. On phones the upload percentage stays visible in the collapsed bottom sheet.
 - Admin screens (users, forward destinations, assignments) work on tablets and phones too; long forms become a single column.
 - Mobile browsers suspend background tabs, so an upload pauses when the user switches away and resumes through the resumable upload protocol when they come back; the queue shows this as paused, not failed.
@@ -306,19 +308,21 @@ All values live as CSS custom properties in `fdrop-web/src/theme/tokens.css`; co
 | Font | Nunito Sans (weights 200, 400, 600, 700), self-hosted from the `@fontsource/nunito-sans` npm package (SIL Open Font License), no font CDN, so the `default-src 'self'` CSP holds |
 | Body | 16 px / 24 px, regular, navy |
 | Small body, table cells, navigation | 14 px / 21–24 px, regular |
-| Page title | 40 px / 48 px, regular (32 px on phones) |
+| Page title | 32 px / 40 px, bold (26 px on phones) |
 | Section label | 12 px / 16 px, bold, uppercase, 1 px letter spacing |
 | Buttons | 14 px, semibold (600) |
 
 **Components**
 
 - **Buttons:** pill shape (24 px radius), 12 px × 32 px padding (shortened to 10 px × 20 px on phones). Primary: deep navy fill, white text. Secondary: transparent, 1 px `#C0CDD8` border, navy text. On dark backgrounds, the secondary button uses a white border and white text.
-- **Top bar:** deep navy, with the fdrop logo (32 px) and name at the left and white 14 px navigation; the active item has a 2 px coral underline.
+- **Workspace layout (after Dropbox and Box):** a light sidebar (`--color-sidebar`) with the logo (32 px) and name, a full-width deep navy Upload pill plus a round New folder button, line icons beside each navigation item, and a storage meter at the bottom. The active item is a tinted pill (`--color-selected`) with a small coral dot. The top bar is white with a pill-shaped search field (`--color-search`) that filters the folder being shown, and the account avatar. Under 1024 px the sidebar becomes a drawer behind a menu button.
+- **File list:** each file or folder has its icon (file, folder, forward arrow) on a 36 px rounded tile; rows are 56 px with a soft hover tint and no zebra stripes; headers are 13 px muted text. Home shows the last uploads as **Recent** cards (12 px radius) above **All files**. The breadcrumb sits above the bold folder title, with the Expires picker, New folder and Folder settings to its right.
 - **Inputs, drop-downs, cards, dialogs:** 4 px radius, 1 px `--color-border` border; raised panels and dialogs use LME's soft navy shadow (`0 20px 28px rgba(19, 66, 107, 0.2)`).
 - **Keyboard focus:** a 2 px coral outline, shown only when the user is tabbing, as on lme.com.
-- **Drop zone:** 2 px dashed `--color-border` on `--color-surface-alt`, with the fdrop mark as a faint centred watermark behind the text (see Logo). While files are dragged over, the border and the watermark turn coral.
+- **Drop zone:** a 72 px strip under the file list, 2 px dashed `--color-border`, 12 px radius, reading "Drop files anywhere, or choose files, to upload to …", with the fdrop mark as a faint centred watermark behind the text (see Logo). The whole list is still the drop target while files are dragged over; the border and the watermark turn coral.
 - **Progress bars:** navy fill on a `--color-border` track; the percentage in navy, semibold; finished rows get a mint "Done" badge.
 - **Errors and destructive actions:** navy text with a coral icon and coral left border or outline. Coral is never used for text or as a fill behind white text: coral on white, and white on coral, measure about 3.8:1, under the 4.5:1 that WCAG AA requires for text.
+- **Light and dark:** a sun/moon switch in the top bar (`role="switch"`, labelled "Dark mode") flips between the two and the choice is kept in the browser's local storage; until the user chooses, fdrop follows the system setting, and the account menu offers "Use the system's light or dark setting" to go back to that. The resolved theme is set as `data-theme` on `<html>` before the first render, so the page never flashes the wrong one.
 - **Dark theme:** lme.com has none, so fdrop derives one. Deep navy background, `#13426B` panels, white text, white-outline secondary buttons, and the same coral accents.
 
 ## Resumable chunked uploads
@@ -327,10 +331,10 @@ A browser upload is a server-side upload session: the client cuts the file into 
 
 ### Protocol
 
-1. **Create.** `POST /api/v1/uploads` with `{ "path": "/docs/big.iso", "size": 4294967296, "lastModified": 1761130000000, "sha256": "<optional whole-file hash>", "overwrite": false }`. Server checks quota, permissions and that the target does not exist (unless `overwrite`), then returns `201 { "id": "upl_01J…", "chunkSize": 8388608, "chunkCount": 512, "expiresAt": "…" }`. Chunk size is chosen by the server: 8 MiB default, raised so `chunkCount` ≤ 10,000 (S3's part limit), never below 5 MiB.
+1. **Create.** `POST /api/v1/uploads` with `{ "path": "/docs/big.iso", "size": 4294967296, "lastModified": 1761130000000, "sha256": "<optional whole-file hash>", "overwrite": false, "expiresIn": "6 days" }` (`expiresIn` optional; see File expiry). Server checks quota, permissions, the expiry against the folder's limits and that the target does not exist (unless `overwrite`), then returns `201 { "id": "upl_01J…", "chunkSize": 8388608, "chunkCount": 512, "expiresAt": "…", "fileExpiresIn": "6 days" }`, where `expiresAt` is when the unfinished session would be abandoned and `fileExpiresIn` the expiry the file will get. Chunk size is chosen by the server: 8 MiB default, raised so `chunkCount` ≤ 10,000 (S3's part limit), never below 5 MiB.
 2. **Upload chunks.** `PUT /api/v1/uploads/{id}/chunks/{index}` with `Content-Length` = chunk length (exactly `chunkSize`, except the last chunk) and `X-Chunk-SHA256`. The server streams the body to `MultipartUpload.putPart`, verifying length and hash as it goes. On success it commits the chunk record and returns `204` with `ETag`. Re-sending an already-stored chunk with the same hash is a no-op `204` (idempotent); a different hash returns `409`.
 3. **Resume.** After any network error the client calls `GET /api/v1/uploads/{id}` → `{ "state": "OPEN", "received": [[0, 211], [214, 214]], "bytesReceived": … }` (ranges of chunk indexes) and re-queues the gaps. A chunk interrupted mid-body is discarded by the server and simply sent again.
-4. **Complete.** `POST /api/v1/uploads/{id}/complete`. The server verifies every index `0..chunkCount-1` is present, calls `MultipartUpload.complete` (local: stream-concatenate into a temp file then atomic move; S3: `CompleteMultipartUpload`), verifies total size and the optional whole-file SHA-256, writes file metadata, and returns `200` with the `ObjectInfo`. Large local assemblies return `202` and the client polls status until `COMPLETED`.
+4. **Complete.** `POST /api/v1/uploads/{id}/complete`. The server verifies every index `0..chunkCount-1` is present, calls `MultipartUpload.complete` (local: stream-concatenate into a temp file then atomic move; S3: `CompleteMultipartUpload`), verifies total size and the optional whole-file SHA-256, writes file metadata and the file's expiry, and returns `200` with the file entry (including `expiresAt`). Large local assemblies return `202` and the client polls status until `COMPLETED`.
 5. **Abort.** `DELETE /api/v1/uploads/{id}` deletes parts and the session.
 
 ### Session states
@@ -354,7 +358,7 @@ Only `COMPLETED` writes the target file; every other end state deletes the store
 
 ### Server-side storage of sessions
 
-- Session and chunk records live in the metadata DB (embedded H2 by default, PostgreSQL for multi-node): `upload_session(id, user_id, target_path, size, chunk_size, chunk_count, sha256, state, backend_upload_id, created_at, updated_at, expires_at)` and `upload_chunk(session_id, idx, size, sha256, etag, received_at)`.
+- Session and chunk records live in the metadata DB (embedded H2 by default, PostgreSQL for multi-node): `upload_session(id, user_id, target_path, size, chunk_size, chunk_count, sha256, state, backend_upload_id, created_at, updated_at, expires_at, expires_in)` (`expires_at` is the session's own TTL; `expires_in` the file expiry to apply at completion) and `upload_chunk(session_id, idx, size, sha256, etag, received_at)`.
 - A chunk row is inserted only after its bytes are durable in the backend (local: `fsync`; S3: `UploadPart` returned), so the DB never claims a chunk that is not stored. A restart loses at most in-flight chunks.
 - Chunk data never touches the JVM heap beyond Netty's pooled buffers; the handler pauses `autoRead` while the backend write catches up.
 - Two concurrent `PUT`s of the same index: a per-session, per-index lock admits one; the other gets `409` and the client re-checks status.
@@ -382,7 +386,7 @@ SFTP runs on Apache MINA SSHD 2.x (`sshd-core` + `sshd-sftp`) on `sftp.port` (de
 - Host key from `sftp.hostKeyPath` (Ed25519 generated on first start if missing, then persisted so clients don't see key changes).
 - `PasswordAuthenticator` and `PublickeyAuthenticator` delegate to the shared `AuthService`; keyboard-interactive disabled.
 - Modern algorithms only: `curve25519-sha256`, `chacha20-poly1305`, `aes256-gcm`, `ssh-ed25519`, `rsa-sha2-512`.
-- `SftpSubsystemFactory` with an `SftpEventListener` for audit logging, metrics, and queueing a forward job when a file written into a forward folder is closed.
+- `SftpSubsystemFactory` with an `SftpEventListener` for audit logging, metrics, queueing a forward job when a file written into a forward folder is closed, and applying the folder's default or a pending expiry when any file is closed (see File expiry).
 - `FileSystemFactory` returns a per-session `FdropFileSystem` presenting the user's virtual tree (`/home`, `/shared`, `/forward`; see Folders), so nothing outside it is reachable by construction. Membership is re-checked on each operation, so a removed member loses access mid-session.
 - Limits: `MAX_CONCURRENT_SESSIONS` per user (default 10), idle timeout 10 min, auth timeout 60 s, max 3 auth attempts.
 
@@ -400,6 +404,7 @@ A `java.nio.file.spi.FileSystemProvider` + `FileSystem` + `Path` implementation 
 | `delete` | `delete` |
 | `move` | `move` |
 | `setAttribute` (mtime, perms) | Accepted and ignored (or stored as metadata for mtime) |
+| Any call on `<name>.fdrop-expires` | No storage call: reads, sets or clears `<name>`'s expiry (see File expiry); never listed |
 
 ### Writes and resume over SFTP
 
@@ -407,6 +412,7 @@ A `java.nio.file.spi.FileSystemProvider` + `FileSystem` + `Path` implementation 
 - Random-offset writes (rare; some clients use them for parallel transfer) fall back to a local spool file under `sftp.spoolDir` and are uploaded on close.
 - If the session drops before close, the partial object is discarded (never visible). SFTP resume (`reput` in OpenSSH, resume in WinSCP) opens with `APPEND`: the local backend appends in place; the S3 backend implements append as a server-side `UploadPartCopy` of the existing object followed by new parts.
 - Downloads support arbitrary offsets via ranged reads, so client-side resume of downloads works on both backends.
+- A file past its expiry is not found, for new opens and for the next read of an open handle; see File expiry.
 
 ## Folders
 
@@ -431,7 +437,7 @@ The same virtual tree appears in the browser and as the SFTP root:
 
 - Shared folders are members-only (decided): users who are not the owner or a member cannot see, list or open them. The creator becomes the **owner** and adds members by username (`GET /api/v1/users?search=` lists matching users with the standard role and application accounts). Application accounts are members on the same terms as people; see Application accounts.
 - Each member is **read-write** (upload, create sub-folders, rename, delete) or **read-only** (list and download).
-- The owner can rename the folder, change members, transfer ownership to a member, and delete the folder with its contents.
+- The owner can rename the folder, change members, transfer ownership to a member, set a default and a maximum expiry for its files (see File expiry), and delete the folder with its contents.
 - A member can leave a folder; the owner cannot leave without transferring ownership first.
 - Removing a member takes effect on their next request, including open SFTP sessions.
 - Uploads into a shared folder count against the **owner's** quota.
@@ -481,7 +487,7 @@ The forward folder's owner chooses:
 | Setting | Notes |
 | --- | --- |
 | Destination | Drop-down of destinations assigned to the owner |
-| After sending | Delete from fdrop (default) or keep for N days (default 7) |
+| After sending | Delete from fdrop (default) or keep for N days (default 7). Keeping is carried out as an expiry of N days from sending; per-file expiries are not accepted in forward folders (see File expiry) |
 
 ### Sending
 
@@ -515,14 +521,242 @@ A job only reaches `SENT` after the destination holds the complete file under it
 
 ### Metadata
 
-- `folder(id, type SHARED|FORWARD, name, owner_sub, created_at)`
+- `folder(id, type SHARED|FORWARD, name, owner_sub, created_at, default_expiry, max_expiry)`
 - `folder_member(folder_id, user_sub, permission READ|WRITE)`
 - `folder_forward(folder_id, destination_id, keep_days)`
 - `forward_destination(id, name, description, host, port, remote_dir, username, server_auth HOST_KEY|HOST_CA, host_key_sha256, host_ca_pubkey, overwrite, enabled, created_by, updated_at)`
 - `forward_client_key(id, destination_id, public_key, private_key_enc, user_cert, state ACTIVE|PENDING|RETIRED, created_at)`
 - `destination_assignment(destination_id, user_sub)`
 - `forward_job(id, folder_id, destination_id, upload_record_id, path, size, state, attempts, last_error, next_attempt_at, created_at, sent_at)`
-- `upload_record(id, user_sub, file_name, size, went_to HOME|SHARED|FORWARD, folder_id, path_at_upload, current_path, status STORED|MOVED|DELETED|FORWARDED, via HTTP|SFTP, client_ip, start_ip, completed_at)`, indexed on `(user_sub, completed_at)` and `(user_sub, client_ip)`
+- `upload_record(id, user_sub, file_name, size, went_to HOME|SHARED|FORWARD, folder_id, path_at_upload, current_path, status STORED|MOVED|DELETED|FORWARDED|EXPIRED, via HTTP|SFTP, client_ip, start_ip, completed_at, expires_at)`, indexed on `(user_sub, completed_at)` and `(user_sub, client_ip)`
+- Expiry columns and tables are listed under File expiry.
+
+## File expiry
+
+Any file can be given an **expiry**: a duration such as `1hour`, `6 days` or `2weeks`. When it has passed, fdrop deletes the file automatically. An expiry can be given with a browser, API or CLI upload, comes from the folder's default otherwise, and can be set over SFTP with a small control file (below). Users with write access can change or clear it later, within the limits the folder owner and the admins set.
+
+- **The clock starts when the file is complete:** a resumable upload reaching `COMPLETED`, a simple `PUT` finishing, or an SFTP write handle closing. A 4 GB upload that takes an hour with expiry `1day` lives for a day after it arrived, not 23 hours. An expiry changed later counts from the moment of the change.
+- **fdrop stores an instant**, `expires_at` in UTC, worked out once. Later changes to folder defaults or limits do not move it (except when an owner asks for that; see Defaults and limits).
+- **The deadline is hard.** From `expires_at`, fdrop treats the file as gone over every protocol, even if the bytes have not been deleted yet: listings leave it out, downloads and SFTP opens return not found, and a transfer still running is cut off at its next read. Physical deletion follows within seconds (see Deletion).
+- **Files only.** Folders have no expiry of their own; a folder emptied by expiry stays until someone deletes it. Dropping a folder in the browser gives each file in it the chosen expiry.
+- **Forward folders don't take a per-file expiry.** Their files already leave fdrop when sent. The "After sending: keep N days" setting (see Per-folder settings) is carried out by the same mechanism: when a job reaches `SENT`, fdrop sets the file's expiry to N days from then. An unsent file never expires, so expiry cannot lose a file that was never delivered.
+
+### Expiry syntax
+
+One syntax is used everywhere a person or script types an expiry: the web UI, the API, the CLI, the SFTP control file and the `expiry.*` limit keys in config.
+
+```abnf
+; ABNF (RFC 5234); string literals are case-insensitive
+expiry   = *WSP ( duration / "never" ) *WSP
+duration = count *WSP unit
+count    = %x31-39 *5DIGIT           ; 1 to 999999: no zero, sign, fraction or leading zero
+unit     = second / minute / hour / day / week / month / year
+second   = "s" / "sec" / "secs" / "second" / "seconds"
+minute   = "min" / "mins" / "minute" / "minutes"
+hour     = "h" / "hr" / "hrs" / "hour" / "hours"
+day      = "d" / "day" / "days"
+week     = "w" / "wk" / "wks" / "week" / "weeks"
+month    = "month" / "months"
+year     = "y" / "yr" / "yrs" / "year" / "years"
+```
+
+- Valid: `1sec`, `1 sec`, `90s`, `1min`, `15 minutes`, `1hour`, `36h`, `1day`, `6 days`, `6days`, `2weeks`, `1 month`, `1year`, `10y`, `never`, ` 6 Days `. Singular and plural units are interchangeable whatever the number (`6 day` and `1 days` are both accepted). Spaces and tabs are allowed around the number and unit, so `6  days` is accepted too.
+- **One number and one unit.** No compound values (`1day 6hours`: write `30 hours`) and no fractions (`1.5 days`: write `36 hours`). ISO 8601 durations (`P6D`) are not accepted, so there is only one syntax to learn and document.
+- **No `m`.** It could mean minutes or months, so it is refused with a hint to write `min` or `month`.
+- **What each unit means.** Seconds, minutes, hours, days and weeks are fixed lengths: a day is always 86,400 s and a week 7 days, so daylight saving changes nothing. Months and years are calendar units, added to the start instant in UTC with `java.time` rules: the day of month is kept and clamped to the month's last day, so 31 January plus `1month` is 28 or 29 February, and 29 February plus `1year` is 28 February.
+- **`never`** means no expiry. It is how a folder default is overridden at upload and how an expiry is cleared later. It is refused where a maximum applies.
+- **Limits.** The parsed value must be at least 1 second (guaranteed by the grammar) and no longer than the maximum that applies to the target folder (see Defaults and limits). The server-wide ceiling `expiry.max` defaults to `10y` and may not be set above `100y`, so a parsed value never comes near the range of `java.time.Instant`.
+- **Canonical form.** fdrop echoes and stores the value as `<count> <unit>`, singular for 1 and plural otherwise, with the unit spelled in full (`1 day`, `6 days`, `90 seconds`). This form is what the UI, API responses, CLI output and audit log show.
+- **One implementation per runtime, one set of test cases.** The server parser lives in `fdrop-core` (`ExpirySpec.parse`). `fdrop-web` has a TypeScript copy for instant feedback in forms, and `fdrop-cli` its own copy for checking options before connecting, since it does not depend on `fdrop-core`. All three run the same table of valid and invalid inputs, expected results and error messages, `fdrop-core/src/test/resources/expiry-syntax-cases.json`. The server always parses again; the client copies only help.
+
+**Errors.** A value that does not parse is refused before any bytes are accepted: HTTP `400` with problem type `invalid-expiry`, the CLI exits with code 1 before connecting, and an SFTP control file fails its close (see Over SFTP). `detail` says what was wrong:
+
+| Input | `detail` |
+| --- | --- |
+| (empty, or only spaces) | Expiry is empty. Use a number and a unit, such as `6 days`, or `never` |
+| `6` | `6` has no unit. Add one of sec, min, hour, day, week, month, year |
+| `6 dys` | Unknown unit `dys`. Use one of sec, min, hour, day, week, month, year |
+| `5m` | `m` is ambiguous. Write `5 min` or `5 months` |
+| `0 days`, `-1 day`, `007 days` | The number must be a whole number from 1 to 999999 without leading zeros. To keep a file forever use `never` |
+| `1.5 days` | Fractions are not supported. Use a smaller unit, such as `36 hours` |
+| `1day 6hours` | Only one number and one unit are allowed, such as `30 hours` |
+| `1000000 sec` | The number must be a whole number from 1 to 999999 |
+
+A value that parses but is too long gets problem type `expiry-too-long` (`400`), naming the limit and who set it: "`2 years` is longer than this folder's maximum of `1 year`, set by the folder owner", or "…the server maximum of `10 years`". `never` where a maximum applies gets the same type: "Files in this folder must expire within `30 days`". An expiry for a forward folder file gets `expiry-not-allowed` (`400`), with a pointer to the folder's "After sending" setting.
+
+### Defaults and limits
+
+Each upload's expiry is resolved in this order, first match wins:
+
+1. The expiry given with the upload (form choice, API field or header, CLI option, SFTP control file), including `never`.
+2. The folder's **default expiry**: the managed folder's for files under `/shared/<name>/`, or for `/home` the user's own default, or else the server's `expiry.home.default`. Ordinary sub-folders use the default of the managed folder or home they are in.
+3. The folder's **maximum expiry**, if one is set: a folder with a maximum and no default gives every file the maximum.
+4. Otherwise the file never expires.
+
+The result must not be longer than the **effective maximum**, the shortest of: the folder's maximum (shared folders), `expiry.home.max` (homes) and `expiry.max` (everywhere). An explicit value over the limit is refused, never shortened without telling the user. A default over the limit, possible only when a limit was lowered after the default was set, is shortened to the limit; the UI warns the owner about the default that no longer fits.
+
+| Setting | Where | Set by | Notes |
+| --- | --- | --- | --- |
+| `expiry.max` | Config | Operator | Server-wide ceiling for every expiry and every folder setting. Default `10y`, at most `100y` |
+| `expiry.home.default` | Config | Operator | Default for `/home` uploads of users who set none. Default `null` (never expires) |
+| `expiry.home.max` | Config | Operator | Longest expiry in any `/home`. When set, every file in a home expires, and `never` is refused there. Default `null` |
+| Home default | Account page, `PATCH /api/v1/me` | The user (admins for an application account, on its admin screen) | Must fit `expiry.home.max` and `expiry.max` |
+| Shared folder default | Folder settings, `PATCH /api/v1/folders/{id}` | Folder owner | Must fit the folder's maximum and `expiry.max` |
+| Shared folder maximum | Folder settings, `PATCH /api/v1/folders/{id}` | Folder owner | When set, every file in the folder expires within it. Shown to members beside the upload control |
+
+- **Lowering a limit is not retroactive by default.** Files already in the folder keep their expiry. With `"applyToExisting": true` on the folder `PATCH` (a checkbox in the UI, "Also shorten the expiry of N files already in this folder that would outlive the new maximum"), every file in the folder whose expiry is later than now plus the new maximum, or that has none, gets now plus the new maximum. This is audited with the number of files changed. Lowering `expiry.max` or `expiry.home.max` in config never changes existing files.
+- **Moving and renaming.** The expiry follows the file. A file moved into a folder whose effective maximum it would outlive gets now plus that maximum, and the move response says so (`"expiryShortened": true`), as does the audit entry. Overwriting a file replaces its expiry with the new upload's, resolved as above; nothing is inherited from the replaced file.
+
+### Setting the expiry over HTTP
+
+The same value can be passed in three ways; an upload that gives two different values gets `400` `conflicting-expiry`.
+
+| Upload | Field |
+| --- | --- |
+| Resumable: `POST /api/v1/uploads` | JSON field `"expiresIn": "6 days"` |
+| Simple: `PUT /api/v1/files/content?path=…` | Query parameter `expiresIn=6days` (URL-encode spaces as `%20`) |
+| Either | Header `X-Fdrop-Expires-In: 6 days` |
+
+- The value is checked against the target folder's limits when the resumable session is created or the simple `PUT` starts, so a refused expiry costs no transferred bytes. It is stored on the session (`upload_session.expires_in`) and applied at `complete`. If the folder's limits were lowered while the upload ran, the expiry is shortened to fit at `complete` rather than failing a finished transfer, and the response says so.
+- Not to be confused with `expiresAt` on the upload session itself, which is when an unfinished session is abandoned (`upload.ttl`; see Resumable chunked uploads).
+- **Changing or clearing later:** `PATCH /api/v1/files?path=…` with one of `{ "expiresIn": "2 days" }` (from now), `{ "expiresAt": "2026-11-30T17:00:00Z" }` (RFC 3339, must be in the future and within the limit), or `{ "expiresIn": "never" }` (clear). Anyone with write permission on the folder may do it: the owner of a home, or an owner or read-write member of a shared folder. Read-only members see the expiry but cannot change it. Extending is allowed, within the limits. Forward folder files return `expiry-not-allowed`.
+- **Showing it:** every file entry in `GET /api/v1/files` carries `"expiresAt"` (RFC 3339 UTC, or `null`) and `"expirySource"` (`upload`, `folderDefault`, `homeDefault`, `changed`, `forwardKeep`). The listing also carries `"folderExpiry": { "default": "7 days", "max": "30 days" }` for the folder being listed, so the UI can show what an upload will get without another call. Downloads send `X-Fdrop-Expires-At` when the file has an expiry. The upload complete response, the simple `PUT` response and the `PATCH` response return the same file entry.
+
+**Example: simple upload with an expiry, then a change.**
+
+```http
+PUT /api/v1/files/content?path=/shared/Invoices/2026-10.pdf HTTP/1.1
+Host: fdrop.example.com:8443
+Authorization: Bearer eyJhbGciOi…
+X-Fdrop-Expires-In: 6 days
+Content-Type: application/pdf
+Content-Length: 482113
+
+<482113 bytes>
+```
+
+```http
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{ "path": "/shared/Invoices/2026-10.pdf", "size": 482113, "mtime": "2026-10-26T09:14:03Z",
+  "type": "file", "expiresAt": "2026-11-01T09:14:03Z", "expirySource": "upload", "expiresIn": "6 days" }
+```
+
+The expiry counts from 09:14:03, when the last byte was committed. Two days later a read-write member extends it, and the folder's 30-day maximum is checked against the new value:
+
+```http
+PATCH /api/v1/files?path=/shared/Invoices/2026-10.pdf HTTP/1.1
+Host: fdrop.example.com:8443
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "expiresIn": "2weeks" }
+```
+
+returns the entry with `"expiresAt": "2026-11-11T…"`, `"expirySource": "changed"`. The same upload done resumably sends `{ "path": "/shared/Invoices/2026-10.pdf", "size": 482113, "expiresIn": "6 days", … }` to `POST /api/v1/uploads`, gets `"fileExpiresIn": "6 days"` echoed in the `201`, and the expiry starts when `complete` returns `COMPLETED`. `{ "expiresIn": "1 decade" }` would have returned `400` with `"type": "…/invalid-expiry"` and `"detail": "Unknown unit 'decade'. Use one of sec, min, hour, day, week, month, year"`.
+
+### In the web UI
+
+- **Upload control.** Beside the drop zone, an "Expires" drop-down shows what new uploads will get, starting at the folder's default ("Expires: folder default, 7 days"). Choices: the folder default, `1 hour`, `1 day`, `7 days`, `30 days`, `Never` (absent when a maximum applies), and "Custom…", a text field using the syntax above, validated as the user types with the same messages as the server. Choices longer than the folder's maximum are disabled, with the maximum shown. The choice applies to files added to the queue after it was made; each queue row shows its file's expiry. Forward folders show no control.
+- **File list.** An "Expires" column shows the time left ("in 5 days", "in 40 min"), with the exact date and time in the user's time zone on hover, an hourglass icon, and nothing for files that do not expire. Under an hour, the icon turns coral (never the text; see Visual design). On phones the time left appears under the file's size and date.
+- **Set expiry.** A row action, "Set expiry…", opens a dialog with the same choices plus "On a date…" (a date and time picker, sent as `expiresAt`) and "Remove expiry". Read-only members see the expiry but not the action.
+- **Folder settings.** The shared folder settings dialog has "Default expiry" and "Maximum expiry" fields (owner only), and the Account page has "Default expiry for files in Home".
+- **My uploads.** A new **Expires** column shows the expiry recorded for the upload, and Status gains **Expired**, with the time it was deleted on hover. Expired rows keep no link or download action.
+- **Expiry shown on time.** A file that expires while its folder is open disappears from the list at its expiry: the UI schedules a refetch of the folder for the earliest expiry shown. An action on a file that has just expired gets "This file has expired".
+
+### Setting the expiry with the CLI
+
+`fdrop upload` takes `--expires-in <expiry>`, using the syntax above (`--expires-in never` overrides a folder default). It is checked locally before connecting, so a typo exits with code 1 and the parser's message, and is sent as `expiresIn` when creating the upload session. A value over the folder's limit is refused by the server with `400` and also exits with code 1. A saved session resumes with the expiry it was created with; giving a different `--expires-in` for the same file starts a new session. The result line and `--json` output include `expiresAt`.
+
+```bash
+fdrop upload nightly-2026-10-26.csv /shared/finance/ --expires-in 2weeks --json
+```
+
+```json
+{"path":"/shared/finance/nightly-2026-10-26.csv","size":91822345,"sha256":"9f2c…","resumed":false,"expiresAt":"2026-11-09T02:00:41Z","expiresIn":"2 weeks"}
+```
+
+`--expires-in` may also go in the CLI config file (`expires-in=7 days`) as a default for every upload of a job. It has no environment variable, since an expiry belongs to an upload, not to a machine.
+
+### Setting the expiry over SFTP
+
+SFTP has no way to send metadata with an upload. Most clients cannot send custom attributes, and file names must stay the names users chose. fdrop therefore offers two mechanisms that work with any client, including scripted `sftp -b` batches:
+
+1. **Folder defaults (the main mechanism).** An SFTP upload with nothing else gets the folder's default and maximum exactly as an HTTP upload does. For most automated drops (a scratch area where everything lives a day, a partner exchange folder kept 30 days) the owner sets a default once and the SFTP side needs nothing.
+2. **Control files, for a per-file expiry.** Writing a small file named `<name>.fdrop-expires` (`expiry.sftp.suffix`) into the same directory sets the expiry of `<name>`. Its content is one expiry in the syntax above (at most 256 bytes of UTF-8; surrounding whitespace and a final newline are ignored). fdrop acts on it when its write handle closes and never stores it as a file:
+   - **Before the upload**, if `<name>` does not exist yet, the value is held as a pending expiry for that user and path for `expiry.sftp.pendingFor` (default 10 minutes), and applied, as if it had been given with the upload, when `<name>` is next completed by that user over SFTP, from any connection or node. This is the recommended order, since the clock then starts when the file is complete, as for HTTP.
+   - **After the upload**, if `<name>` exists, its expiry is changed, counting from now, like `PATCH`. `never` clears it.
+   - **Reading** `<name>.fdrop-expires` (for example `get report.pdf.fdrop-expires /dev/stdout`) returns the current expiry as one line, `2026-11-01T09:14:03Z 6 days` or `never`, or `pending 6 days` while a value waits for its file. **Deleting** it (`rm`) clears the expiry, like writing `never`. With neither a file nor a pending value, it does not exist.
+   - **Clients that upload to a temporary name** (WinSCP's `.filepart`, `lftp`'s `.in.` prefix) and then rename are covered: renaming onto a control file name counts as writing it, and a pending value is applied when a file is renamed into `<name>` as well as when it is written under that name.
+
+   Control files never appear in listings and are not counted in quotas, but answer `stat` (with the size of their text) so that clients which stat before `get` can read them. They need write permission on the folder, as a `PATCH` does. A value that does not parse, is too long, or targets a forward folder makes the close fail with `SSH_FX_FAILURE` and the same message as the HTTP `detail`; MINA sends it as the status message, and OpenSSH `sftp` and WinSCP print it. The failure is also audited.
+
+Why this choice: per-file settings are rare over SFTP, and most SFTP uploads are unattended jobs where a folder default is simplest and cannot be forgotten. Control files work with every client and every scripting tool because they are plain uploads, can be checked by reading them back, and keep the uploaded file's name unchanged. Alternatives that were rejected: encoding the expiry in the file name (`report.pdf;6days`), which breaks clients that check the name after upload and leaks into the receiver's file names; magic directories (`/home/.expire-6days/`), which change the file's path; and SFTP extended attributes in `SSH_FXP_SETSTAT`, which few clients can send. The suffix `.fdrop-expires` is reserved: no file with that suffix can be created by any protocol (HTTP returns `400` `reserved-name`).
+
+**Example: SFTP upload with an expiry.** An application account, logging in with its SSH key, sends today's report to a shared folder, to be deleted 6 days after it arrives:
+
+```bash
+printf '6 days\n' > report.pdf.fdrop-expires
+sftp -P 2222 -b - erp-export@fdrop.example.com <<'EOF'
+cd /shared/finance
+put report.pdf.fdrop-expires
+put report.pdf
+get report.pdf.fdrop-expires /dev/stdout
+EOF
+```
+
+```text
+sftp> cd /shared/finance
+sftp> put report.pdf.fdrop-expires
+Uploading report.pdf.fdrop-expires to /shared/finance/report.pdf.fdrop-expires
+sftp> put report.pdf
+Uploading report.pdf to /shared/finance/report.pdf
+sftp> get report.pdf.fdrop-expires /dev/stdout
+Fetching /shared/finance/report.pdf.fdrop-expires to /dev/stdout
+2026-11-01T09:14:03Z 6 days
+```
+
+`ls` shows only `report.pdf`. Had the control file said `6 dys`, the first `put` would have failed with "Unknown unit 'dys'. Use one of sec, min, hour, day, week, month, year", and `sftp -b` would have stopped there before sending the report. With no control file, `report.pdf` would get the `/shared/finance` folder default, say `30 days`.
+
+### Deletion
+
+Expiry deletion is driven by the metadata DB, so it does not depend on which node took the upload and survives restarts.
+
+- **Expiry rows.** Every file with an expiry has one `file_expiry` row, written in the same transaction as the upload's completion (or the change), and moved with the file on rename or move. Files without an expiry have none.
+- **Sweeper.** An `ExpirySweeper` runs on every node every `expiry.sweepInterval` (default 30 s). It claims due rows with `SELECT … WHERE expires_at <= now() AND (claimed_until IS NULL OR claimed_until < now()) ORDER BY expires_at LIMIT expiry.batchSize FOR UPDATE SKIP LOCKED` (PostgreSQL; on H2, which is single-node only, plain `FOR UPDATE`), sets `claimed_by` and `claimed_until = now() + expiry.claimTimeout` and commits. Then it deletes each file through the Storage SPI, and for each one, in one transaction, deletes the row, sets the `upload_record` to `EXPIRED` and releases the quota, then writes the audit entry once that has committed. `now()` is the database's clock, so the nodes agree on what is due; the nodes' own clocks are used only for the access check, and NTP is required as for TLS and tokens.
+- **Precision.** Access stops exactly at `expires_at` on every node. Physical deletion normally follows within about a second: when a node writes or reads an expiry due within the next `sweepInterval`, it also puts it on an in-memory timer, which fires a claim of that one row. If that node stops, the next sweep on any node does it, within `sweepInterval`. So a `1sec` expiry is gone from listings 1 s after the upload and from storage a second or so later. A large backlog is worked through at up to `expiry.maxDeletesPerSecond` (default 200) per node so it cannot starve S3 or the DB.
+- **Restarts and downtime.** Nothing is kept only in memory. At startup the sweeper runs at once; files that expired while fdrop was down are already hidden by the access check and are deleted in `expires_at` order. A node that crashes mid-batch leaves claims that lapse after `claimTimeout` (default 5 min) and are picked up by another node or by itself after restart.
+- **Several nodes.** `SKIP LOCKED` lets every node sweep without two deleting the same file. Deleting is idempotent: a file already gone (deleted by a user, by another node before a crash, or by hand) counts as deleted (`outcome="already_gone"`). The `upload_record` update commits with the row delete and the audit line is written only after that commit, so each expired file is recorded once; a crash between the two can lose that one audit line, but never the `EXPIRED` status.
+- **Failures.** A storage error leaves the row in place with `attempts` and `last_error`, retried with backoff (1 min doubling to 1 h) for as long as it takes, and counted in metrics. The file stays hidden meanwhile. A file that is still not deleted an hour after its expiry raises the `FdropExpiryOverdue` alert.
+- **Local backend.** `Files.deleteIfExists` on the resolved path; the parent folders stay.
+- **S3 backend.** Due rows are deleted in batches with `DeleteObjects` (up to 1,000 keys per request), with each key's result handled one by one. On a versioned bucket, `DeleteObject` only adds a delete marker; operators who need expiry to remove the bytes must add a lifecycle rule for noncurrent versions (`NoncurrentVersionExpiration`) to the bucket, and fdrop logs a warning at startup when bucket versioning is on. S3's own lifecycle expiration is not used for expiry: it works in whole days, runs at an unspecified time once a day, and would delete files fdrop still lists.
+- **Unfinished uploads** are not affected; abandoned upload sessions are cleaned by the upload janitor as before (`upload.ttl`).
+- **Pending SFTP control values** past `expiry.sftp.pendingFor` are deleted by the upload janitor.
+
+### Audit and metrics
+
+Audit entries (JSON lines, as for every other event), each with acting user (or `system`), protocol, client IP, path, folder id and `expiresAt`:
+
+| Event | When | Extra fields |
+| --- | --- | --- |
+| `file.expiry.set` | An upload completed with an expiry | `expiresIn`, `source` (upload, folderDefault, homeDefault, forwardKeep), `shortened` |
+| `file.expiry.changed` | `PATCH`, SFTP control file, move into a shorter maximum, or `applyToExisting` | `from`, `to`, `reason` (user, controlFile, move, folderMaximum) |
+| `file.expiry.cleared` | Cleared with `never`, "Remove expiry" or `rm` of the control file | `from` |
+| `file.expiry.refused` | A value refused for syntax, length or folder type | `input` (first 64 characters), `problem` |
+| `file.expired` | The sweeper deleted the file | `size`, `backend`, `uploadedBy`, `lagSeconds` (deletion time minus `expires_at`), `outcome` (deleted, already_gone) |
+| `file.expiry.deleteFailed` | A delete attempt failed | `attempts`, `error` |
+| `folder.expiry.changed` | A folder or home default or maximum changed | `default`, `max`, `applyToExisting`, `filesChanged` |
+
+Metrics are listed under Observability: `fdrop_expiry_set_total`, `fdrop_expiry_refused_total`, `fdrop_expiry_deleted_total`, `fdrop_expiry_delete_lag_seconds`, `fdrop_expiry_files` and `fdrop_expiry_overdue_files`, with the alerts `FdropExpiryOverdue` and `FdropExpiryDeleteErrors`.
+
+### Metadata
+
+- `file_expiry(id, storage_key UNIQUE, user_sub, folder_id, expires_at, expires_in, source UPLOAD|FOLDER_DEFAULT|HOME_DEFAULT|CHANGED|FORWARD_KEEP, set_by_sub, set_via HTTP|SFTP, set_at, upload_record_id, claimed_by, claimed_until, attempts, last_error, next_attempt_at)`, indexed on `(expires_at)`. `user_sub` is the home's owner for files under `/home`, `folder_id` the managed folder otherwise; `expires_in` is the canonical text, kept for display and audit.
+- `folder` gains `default_expiry` and `max_expiry` (canonical text, nullable); `user` gains `home_default_expiry`.
+- `upload_session` gains `expires_in`.
+- `sftp_pending_expiry(user_sub, storage_key, expires_in, created_at)`, primary key `(user_sub, storage_key)`.
+- `upload_record` gains `expires_at` and the status `EXPIRED` (above).
 
 ## Authentication and authorisation
 
@@ -601,6 +835,8 @@ fdrop has three roles: **standard** (`fdrop-user`) works with files and creates 
 | Be added as a member of shared and forward folders | Yes | — | Yes |
 | Create shared folders, manage their members | Yes (owner) | — | No |
 | Create forward folders from a drop-down of assigned destinations | Yes (owner) | — | No |
+| Set, change and clear file expiries where they can write | Yes | — | Yes |
+| Set own home default expiry; a shared folder's default and maximum expiry | Yes (home; folders they own) | — | No (admin sets its home default) |
 | Manage own SSH keys | Yes | — | No (admin manages them) |
 | Set up and remove own second factors | Yes | — | No |
 | List users, create users, delete users | No | Yes | No |
@@ -694,7 +930,7 @@ An **Application accounts** admin screen, separate from Users, lists each accoun
 
 ### Metadata
 
-- `user(sub, username, kind USER|APPLICATION, quota, …)`
+- `user(sub, username, kind USER|APPLICATION, quota, home_default_expiry, …)`
 - `app_account(sub, description, responsible_sub, allowed_methods, allowed_sources, password_set_at, created_by, created_at, last_login_at)`
 - `app_client_cert(id, sub, match PINNED|SUBJECT, sha256, subject, san, not_after, state ACTIVE|RETIRED, created_at)`
 - Application SSH keys use the existing SSH key table, keyed by `sub`.
@@ -722,6 +958,7 @@ fdrop whoami [options]
 | `--keystore-password-file` | `FDROP_KEYSTORE_PASSWORD_FILE` | Password for the PKCS#12 file |
 | `--ca` | `FDROP_CA` | Extra PEM CA bundle to trust for the server certificate, added to the JDK's default trust store |
 | `--overwrite` | — | Replace an existing file at the target; without it an existing file fails with exit code 3 |
+| `--expires-in` | — | Expiry for the uploaded file, e.g. `6 days`, `2weeks` or `never`; without it the folder's default applies. See File expiry |
 | `--parallel` | — | Chunks sent at once (default 3, maximum 8) |
 | `--retry-for` | — | How long to keep retrying network errors before giving up (default 1h) |
 | `--no-resume` | — | Do not resume a previous run's upload session; start a new one |
@@ -737,10 +974,10 @@ fdrop whoami [options]
 1. Load the client certificate and key into a `KeyManager`, and the JDK trust store plus `--ca` into a `TrustManager`; build one `SSLContext` (TLS 1.2+) for a `java.net.http.HttpClient` using HTTP/1.1.
 2. Read the file once to compute its SHA-256, so the server can verify the assembled file.
 3. Look for a saved session for this upload in `~/.local/state/fdrop/uploads/`, keyed by a hash of URL, account certificate fingerprint, remote path, size, last-modified time and file hash. If one exists, `GET /api/v1/uploads/{id}` gives the chunks already received; a `404` or a non-`OPEN` state means start again.
-4. Otherwise `POST /api/v1/uploads` with path, size, last-modified, SHA-256 and `overwrite`, and save the returned id, chunk size and chunk count (file mode `0600`).
+4. Otherwise `POST /api/v1/uploads` with path, size, last-modified, SHA-256, `overwrite` and `expiresIn` when given, and save the returned id, chunk size and chunk count (file mode `0600`).
 5. Send each missing chunk with `PUT /api/v1/uploads/{id}/chunks/{index}` and `X-Chunk-SHA256`, up to `--parallel` at once. Each chunk body streams from a `FileChannel` region, so memory stays at a few buffers whatever the file size.
 6. On a network error, a timeout, a connection dropped during the TLS handshake, `429` or `5xx`, wait with exponential backoff (1 s doubling to 60 s, with jitter) and resume from the server's status; a `409` on a chunk also triggers a status check (three times at most for the same chunk). Stop when nothing has got through for `--retry-for`. A server whose session has expired (`404`) gets a new one.
-7. `POST /api/v1/uploads/{id}/complete`; on `202`, poll status until `COMPLETED` or `FAILED`. Then delete the saved session and print the result (path, size, SHA-256, whether it resumed, and for a forward folder that the file is queued for forwarding).
+7. `POST /api/v1/uploads/{id}/complete`; on `202`, poll status until `COMPLETED` or `FAILED`. Then delete the saved session and print the result (path, size, SHA-256, whether it resumed, the expiry if any, and for a forward folder that the file is queued for forwarding).
 8. On Ctrl-C, keep the session on the server and the state file, so the next run resumes. A failed upload (wrong hash, `FAILED`) is aborted with `DELETE /api/v1/uploads/{id}`.
 
 Progress goes to stderr as a percentage of bytes acknowledged by the server, only when stderr is a terminal. Requests carry `User-Agent: fdrop-cli/<version>`, which fdrop records in the audit log.
@@ -750,7 +987,7 @@ Progress goes to stderr as a percentage of bytes acknowledged by the server, onl
 | Code | Meaning |
 | --- | --- |
 | 0 | Uploaded (or `whoami` succeeded) |
-| 1 | Usage error: bad option, missing file, unreadable certificate or key, or a remote path the server rejects (`400` on create) |
+| 1 | Usage error: bad option, missing file, unreadable certificate or key, an `--expires-in` that does not parse, or a remote path or expiry the server rejects (`400` on create) |
 | 2 | Authentication failed: TLS handshake refused, untrusted server certificate, or `401` |
 | 3 | Target exists and `--overwrite` was not given (`409` on create) |
 | 4 | Not allowed: `403` (no write permission), quota exceeded (`413`), or `404` (no such folder, or not a member) |
@@ -781,11 +1018,12 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 - Downloads always send `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` so uploaded HTML cannot execute in the app's origin.
 - Content-Security-Policy `default-src 'self'` on the UI.
 - Max file size `limits.maxFileSize` (default 100 GiB) enforced at upload create and on stream length.
-- Audit log (JSON lines) of logins, uploads, downloads, deletes, moves with user, IP, protocol, path and bytes.
+- Audit log (JSON lines) of logins, uploads, downloads, deletes, moves and expiry (set, changed, cleared, refused, expired) with user, IP, protocol, path and bytes.
+- File expiry is a hard deadline: an expired file is refused on every protocol before its bytes are deleted. The `.fdrop-expires` suffix is reserved for SFTP control files and cannot be used as a file name.
 
 ## Configuration
 
-One YAML file (`fdrop.yaml`), every key overridable by env var (`FDROP_STORAGE_TYPE`, `FDROP_STORAGE_S3_BUCKET`, …).
+One YAML file (`fdrop.yaml`), every key overridable by env var (`FDROP_STORAGE_TYPE`, `FDROP_STORAGE_S3_BUCKET`, …). `expiry.max`, `expiry.home.default` and `expiry.home.max` are expiries in the File expiry syntax (`10y`, `30 days`, `never` is written `null`); the other `expiry.*` timings use the config's usual duration format.
 
 ```yaml
 http:
@@ -857,6 +1095,19 @@ upload:
   ttl: 24h
   maxParallelChunks: 3
   historyRetention: 365d   # My uploads rows
+expiry:
+  enabled: true            # false = no new expiries can be set and the UI hides its controls; existing expiries still run
+  max: 10y                 # longest expiry anyone can set, and the cap on folder and home settings (at most 100y)
+  home:
+    default: null          # expiry for /home uploads when the user has set no default; null = never
+    max: null              # longest expiry in any /home; when set, every /home file expires
+  sweepInterval: 30s       # how often each node looks for due files
+  batchSize: 500           # files claimed per sweep
+  claimTimeout: 5m         # a claim not finished by then is taken over by another node
+  maxDeletesPerSecond: 200 # per node, when working through a backlog
+  sftp:
+    suffix: .fdrop-expires # control file suffix; reserved on every protocol
+    pendingFor: 10m        # how long a control file written before its file is kept
 db:
   url: jdbc:h2:file:/var/lib/fdrop/meta   # or jdbc:postgresql://…
 limits:
@@ -1166,6 +1417,12 @@ All fdrop metrics are prefixed `fdrop_`. Durations are histograms in seconds, si
 | `fdrop_keycloak_request_seconds` | histogram | `operation` (token, jwks, password_grant, admin_api), `outcome` | Calls to Keycloak |
 | `fdrop_users` | gauge | `kind` (user, application) | Users and application accounts known to fdrop |
 | `fdrop_folders` | gauge | `type` (shared, forward) | Managed folders |
+| `fdrop_expiry_set_total` | counter | `protocol` (http, sftp), `source` (upload, folder_default, home_default, changed, forward_keep, cleared) | Expiries set, changed or cleared |
+| `fdrop_expiry_refused_total` | counter | `protocol`, `reason` (syntax, too_long, not_allowed, conflicting) | Expiry values refused |
+| `fdrop_expiry_files` | gauge | — | Files that have an expiry |
+| `fdrop_expiry_overdue_files` | gauge | — | Files more than 5 min past their expiry and not yet deleted |
+| `fdrop_expiry_deleted_total` | counter | `backend`, `outcome` (deleted, already_gone, error) | Expiry delete attempts |
+| `fdrop_expiry_delete_lag_seconds` | histogram | `backend` | Time from a file's expiry to its deletion from storage |
 
 Micrometer's standard JVM and process metrics (`jvm_memory_*`, `jvm_gc_*`, `jvm_threads_*`, `process_*`), Netty's pooled buffer memory, and the DB connection pool (`hikaricp_*`) are included too.
 
@@ -1201,6 +1458,8 @@ scrape_configs:
 | `FdropAppAuthFailures` | more than 20 application login failures in 5 min | warning |
 | `FdropAppCredentialExpiring` | any application password or certificate expiring within 7 days | warning |
 | `FdropUploadAssemblySlow` | 95th percentile assembly time over 5 min for 30 min | warning |
+| `FdropExpiryOverdue` | any file still not deleted an hour after its expiry (`fdrop_expiry_overdue_files` > 0 for 55 min) | warning |
+| `FdropExpiryDeleteErrors` | expiry deletes with `outcome="error"` above 5% for 15 min | warning |
 | `FdropHeapHigh` | JVM heap above 90% of max for 15 min | warning |
 
 ## Testing
@@ -1217,6 +1476,7 @@ scrape_configs:
 - Forward tests against OpenSSH Testcontainers: file arrives complete under its final name; pinned host key and host-CA modes accept the right server and fail fast on a wrong key, an unsigned key or an expired certificate; the destination rejects fdrop without the right client key or user certificate; password auth is never attempted; key rotation works without downtime; destination down then up is retried; hosts outside `forward.allowedHosts` are refused; private keys never appear in API responses or logs.
 - My uploads tests: uploads over the browser and SFTP both appear with the right size and Folder or Forward badge; forward status follows the job; rows survive move, delete and forwarding; users never see other users' rows; filters, totals and paging are correct; retention removes old rows; the recorded IP is the real client's behind a trusted proxy, both for HTTP (`X-Forwarded-For`) and SFTP (PROXY protocol), and a forged `X-Forwarded-For` from an untrusted address is ignored.
 - Metrics tests: `/metrics` is served only on the management port and returns valid Prometheus and OpenMetrics output; the bearer token is enforced when set; every documented metric appears with its labels; no label value contains a test username, file name, path or hostname; `/readyz` reports degraded when Keycloak is stopped and 503 when the DB is; `promtool check rules` passes on `deploy/prometheus/alerts.yml`.
+- File expiry tests: the syntax cases file passes in `fdrop-core`, Vitest and `fdrop-cli`, including calendar months and years (31 January, 29 February) and every error message; with a fake clock, a file uploaded over HTTP (resumable and simple), the CLI and SFTP gets the right expiry from the upload, the folder default, the home default or the folder maximum, counted from completion; values over a maximum and in forward folders are refused before any bytes are sent; conflicting header and field are refused; `PATCH` extends, shortens and clears within limits and is refused for read-only members; moves into a folder with a shorter maximum shorten the expiry; `applyToExisting` changes only files over the new maximum; an expired file is hidden from HTTP and SFTP listings and opens at its expiry instant and an open download is cut off; SFTP control files before and after the upload, with WinSCP-style temporary names, read back and `rm`, a pending value that lapses, a bad value failing the close with its message, and the reserved suffix refused over HTTP; forward folder files expire N days after `SENT` and never before; deletion on the local backend and on MinIO with `DeleteObjects`, a storage error retried, two sweeping nodes on one PostgreSQL deleting each file once, a node killed mid-batch whose claims are taken over, and a server stopped past many expiries deleting them all at start; audit entries and metrics as documented.
 - Resumable upload tests: kill the connection mid-chunk, restart the server between chunks, duplicate and out-of-order chunks, wrong hash, expiry.
 - SFTP integration tests with MINA's client and OpenSSH `sftp` in a container (put, get, reput, rename, large files).
 - Vitest + React Testing Library component tests, and Playwright tests of the UI upload queue with network throttling and offline toggling; Playwright logs in through Keycloak as admin / admin, and as jugash and chris for multi-user sharing and permission checks. Playwright runs each UI test at phone (390 × 844), tablet (820 × 1180) and desktop (1440 × 900) viewports, with screenshot comparisons per layout and an axe accessibility check. Playwright also drops single files, many files and a folder onto the drop zone, checks refused drops in read-only and forward folders, and checks that the percentage rises without going back, survives a dropped connection and a reload, and ends at 100% only after completion.
@@ -1233,7 +1493,8 @@ scrape_configs:
 7. **M7 Forward folders:** admin-managed destinations with SSH mutual authentication (pinned host key or host CA, fdrop client keys and certificates), user assignments and the destination drop-down, encrypted keys, forward workers and retries, status UI, the My uploads page, `sftp-target` in the devcontainer.
 8. **M8 Application accounts:** `fdrop-applications` group and `fdrop-app` role, admin screens, password login over HTTP Basic and SFTP, the mTLS listener with pinned and by-subject certificates, SSH keys, source address limits, folder membership, expiry warnings, `app-demo` in the dev realm.
 9. **M9 Command line client:** `fdrop-cli` module with `upload` and `whoami`, certificate loading, resumable uploads that survive drops and restarts, exit codes, shaded jar and release archive, and its unit, fake-server, integration and end-to-end tests.
-10. **M10 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
+10. **M10 File expiry:** expiry syntax in `fdrop-core`, `fdrop-web` and `fdrop-cli` with shared test cases, expiry on HTTP, CLI and SFTP uploads (folder defaults, SFTP control files), change and clear, folder and home defaults and maximums, the sweeper with claims across nodes for both backends, UI columns and dialogs, audit, metrics and alerts.
+11. **M11 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
 
 ## Open questions
 
@@ -1242,4 +1503,6 @@ scrape_configs:
 - Is a single node enough, or must v1 run several nodes behind a load balancer (forces PostgreSQL and S3)?
 - Should the client-supplied whole-file SHA-256 be mandatory for integrity, at the cost of hashing time on large files?
 - Should a forward folder ever forward to more than one destination, or pull files back from a remote server?
+- Should fdrop warn uploaders before their files expire (in the UI, or by an alert or email), and should the folder owner be able to see who set each expiry?
+- Should lowering a folder's maximum shorten existing files' expiries by default, rather than only when the owner ticks "Also shorten"?
 - Should password login for application accounts be allowed in production at all, or only mTLS and SSH keys, with passwords kept for dev and migration?

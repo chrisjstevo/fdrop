@@ -151,7 +151,7 @@ public final class ForwardWorker implements AutoCloseable {
             app.metrics.forwardBytes(d.id(), j.size());
             Audit.log("forward", "folder", folder.get().name(), "file", j.fileName(), "bytes", j.size(),
                     "destination", d.name(), "host", d.host(), "outcome", "sent");
-            afterSent(folder.get(), j);
+            afterSent(folder.get(), j, now);
         } catch (ForwardClient.ForwardException e) {
             app.metrics.forwardSend(d.id(), false, System.nanoTime() - start);
             fail(j, e.getMessage(), reason(e.failure()), e.permanent());
@@ -264,10 +264,14 @@ public final class ForwardWorker implements AutoCloseable {
         app.records.updateJob(j.id(), JobState.RETRY_WAIT, msg, now + backoff, first, null);
     }
 
-    /** Deletes the file from fdrop after sending, unless the folder keeps files for some days. */
-    private void afterSent(Folder f, ForwardJob j) {
+    /**
+     * Deletes the file from fdrop after sending, unless the folder keeps files for some days: then it expires that
+     * long after sending, and the expiry sweeper deletes it.
+     */
+    private void afterSent(Folder f, ForwardJob j, long sentAt) {
         Optional<FolderForward> ff = app.folders.forward(f.id());
         if (ff.isPresent() && ff.get().keepDays() > 0) {
+            app.expiry.setForwardKeep(j, ff.get().keepDays(), sentAt);
             return;
         }
         app.janitor.deleteForwarded(f, j);

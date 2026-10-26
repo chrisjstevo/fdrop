@@ -8,6 +8,11 @@ import io.fdrop.core.service.SshTools;
 import io.fdrop.core.storage.StorageBackend;
 import io.fdrop.core.util.Hashing;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.Map;
 
@@ -33,7 +38,16 @@ public final class TestSupport {
 
     /** With a directory a test controls, to give users second factors. */
     public static Fdrop fdrop(FdropConfig cfg, StorageBackend backend, FakeDirectory directory) {
-        Fdrop app = new Fdrop(cfg, backend, new FakeSsh(), FakeOidc::new);
+        return fdrop(cfg, backend, directory, Clock.systemUTC());
+    }
+
+    /** With a clock a test controls, for file expiry. */
+    public static Fdrop fdrop(FdropConfig cfg, StorageBackend backend, Clock clock) {
+        return fdrop(cfg, backend, new FakeDirectory(), clock);
+    }
+
+    public static Fdrop fdrop(FdropConfig cfg, StorageBackend backend, FakeDirectory directory, Clock clock) {
+        Fdrop app = new Fdrop(cfg, backend, new FakeSsh(), FakeOidc::new, clock);
         app.twoFactor.useDirectory(directory);
         app.appAccounts.useDirectory(directory.applications());
         ((FakeOidc) app.oidc).usePasswords(directory::password);
@@ -56,6 +70,38 @@ public final class TestSupport {
     /** The principal the fakes give a username: {@code app…} applications, {@code admin…} admins, else users. */
     public static Principal byName(String name) {
         return name.startsWith("app") ? app(name) : name.startsWith("admin") ? admin(name) : user(name);
+    }
+
+    /** A clock that only moves when a test moves it. */
+    public static final class MutableClock extends Clock {
+        private volatile Instant now;
+
+        public MutableClock(Instant start) {
+            this.now = start;
+        }
+
+        public void advance(Duration d) {
+            now = now.plus(d);
+        }
+
+        public void set(Instant t) {
+            now = t;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 
     /** SSH tools that accept any key and never connect anywhere. */

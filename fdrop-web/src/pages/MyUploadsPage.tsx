@@ -166,6 +166,7 @@ export function MyUploadsPage() {
                 {sortHeader("Size", "size_asc", "size_desc", true)}
                 <th scope="col">Went to</th>
                 {sortHeader("Uploaded", "date_asc", "date_desc")}
+                <th scope="col">Expires</th>
                 <th scope="col">Via</th>
                 <th scope="col">From IP</th>
                 <th scope="col">Status</th>
@@ -193,6 +194,7 @@ export function MyUploadsPage() {
                   </td>
                   <td>{wentTo(r)}</td>
                   <td title={tz}>{formatDate(r.completedAt)}</td>
+                  <td title={tz}>{r.expiresAt ? formatDate(r.expiresAt) : ""}</td>
                   <td>{r.via === "HTTP" ? "Browser" : "SFTP"}</td>
                   <td>{fromIp(r)}</td>
                   <td>
@@ -246,6 +248,8 @@ export function MyUploadsPage() {
             <dd>{wentTo(details)}</dd>
             <dt>Uploaded</dt>
             <dd>{formatDate(details.completedAt)}</dd>
+            <dt>{details.status === "EXPIRED" ? "Expired" : "Expires"}</dt>
+            <dd>{details.expiresAt ? formatDate(details.expiresAt) : "Never"}</dd>
             <dt>Via</dt>
             <dd>{details.via === "HTTP" ? "Browser" : "SFTP"}</dd>
             <dt>From IP</dt>

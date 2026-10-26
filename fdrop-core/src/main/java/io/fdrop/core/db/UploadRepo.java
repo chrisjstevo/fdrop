@@ -26,7 +26,7 @@ public final class UploadRepo {
                 rs.getString("sha256"), UploadState.valueOf(rs.getString("state")),
                 rs.getString("backend_upload_id"), rs.getBoolean("overwrite"), rs.getString("start_ip"),
                 Db.getLong(rs, "last_modified"), rs.getString("error"), rs.getLong("created_at"),
-                rs.getLong("updated_at"), rs.getLong("expires_at"));
+                rs.getLong("updated_at"), rs.getLong("expires_at"), rs.getString("expires_in"));
     }
 
     private static UploadChunk chunk(ResultSet rs) throws SQLException {
@@ -37,11 +37,11 @@ public final class UploadRepo {
     public void insert(UploadSession s) {
         db.update("INSERT INTO upload_session (id, user_sub, virtual_path, storage_key, folder_id, went_to, file_name,"
                         + " size, chunk_size, chunk_count, sha256, state, backend_upload_id, overwrite, start_ip,"
-                        + " last_modified, error, created_at, updated_at, expires_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", s.id(), s.userSub(),
+                        + " last_modified, error, created_at, updated_at, expires_at, expires_in)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", s.id(), s.userSub(),
                 s.virtualPath(), s.storageKey(), s.folderId(), s.wentTo(), s.fileName(), s.size(), s.chunkSize(),
                 s.chunkCount(), s.sha256(), s.state(), s.backendUploadId(), s.overwrite(), s.startIp(),
-                s.lastModified(), s.error(), s.createdAt(), s.updatedAt(), s.expiresAt());
+                s.lastModified(), s.error(), s.createdAt(), s.updatedAt(), s.expiresAt(), s.expiresIn());
     }
 
     public Optional<UploadSession> find(String id) {

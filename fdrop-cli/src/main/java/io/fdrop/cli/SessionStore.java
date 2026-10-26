@@ -41,11 +41,21 @@ class SessionStore {
 
     static String key(String url, String certFingerprint, String remotePath, long size, long lastModified,
                       String fileSha256) {
+        return key(url, certFingerprint, remotePath, size, lastModified, fileSha256, null);
+    }
+
+    /** As above; a different {@code --expires-in} for the same file is a different session. */
+    static String key(String url, String certFingerprint, String remotePath, long size, long lastModified,
+                      String fileSha256, String expiresIn) {
         try {
             MessageDigest d = MessageDigest.getInstance("SHA-256");
             for (String part : new String[]{url, certFingerprint, remotePath, Long.toString(size),
                     Long.toString(lastModified), fileSha256}) {
                 d.update(part.getBytes(StandardCharsets.UTF_8));
+                d.update((byte) 0);
+            }
+            if (expiresIn != null) {
+                d.update(("expires:" + expiresIn).getBytes(StandardCharsets.UTF_8));
                 d.update((byte) 0);
             }
             return HexFormat.of().formatHex(d.digest());

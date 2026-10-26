@@ -84,6 +84,24 @@ groups:
         annotations:
           summary: 95th percentile upload assembly time is over 5 minutes
 
+      - alert: FdropExpiryOverdue
+        expr: max(fdrop_expiry_overdue_files{job="fdrop"}) > 0
+        for: 55m
+        labels:
+          severity: warning
+        annotations:
+          summary: Files are still not deleted an hour after their expiry; check fdrop_expiry_deleted_total errors and storage
+
+      - alert: FdropExpiryDeleteErrors
+        expr: |
+          sum(rate(fdrop_expiry_deleted_total{job="fdrop",outcome="error"}[15m]))
+            / sum(rate(fdrop_expiry_deleted_total{job="fdrop"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 5% of expiry deletions are failing
+
       - alert: FdropHeapHigh
         expr: |
           sum(jvm_memory_used_bytes{job="fdrop",area="heap"})

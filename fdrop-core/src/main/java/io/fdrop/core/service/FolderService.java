@@ -38,7 +38,7 @@ public final class FolderService {
     /** A folder as one user sees it. */
     public record FolderView(String id, FolderType type, String name, String path, String owner, String role,
                              String destinationId, String destinationName, Integer keepDays, boolean paused,
-                             List<MemberView> members, long createdAt) {
+                             List<MemberView> members, long createdAt, String defaultExpiry, String maxExpiry) {
     }
 
     private final Db db;
@@ -48,9 +48,10 @@ public final class FolderService {
     private final RecordRepo records;
     private final StorageBackend storage;
     private final PathResolver resolver;
+    private final ExpiryService expiry;
 
     public FolderService(Db db, FolderRepo folders, DestinationRepo destinations, UserRepo users, RecordRepo records,
-                         StorageBackend storage, PathResolver resolver) {
+                         StorageBackend storage, PathResolver resolver, ExpiryService expiry) {
         this.db = db;
         this.folders = folders;
         this.destinations = destinations;
@@ -58,6 +59,7 @@ public final class FolderService {
         this.records = records;
         this.storage = storage;
         this.resolver = resolver;
+        this.expiry = expiry;
     }
 
     public List<FolderView> list(Principal p) {
@@ -101,8 +103,9 @@ public final class FolderService {
             }
         }
         String path = (f.type() == FolderType.SHARED ? "/shared/" : "/forward/") + f.name();
+        var exp = expiry.folderSettings(f);
         return new FolderView(f.id(), f.type(), f.name(), path, ownerName, role, destId, destName, keep, paused,
-                members, f.createdAt());
+                members, f.createdAt(), exp.defaultExpiry(), exp.maxExpiry());
     }
 
     public FolderView create(Principal p, FolderType type, String rawName, String destinationId, Integer keepDays) {
@@ -190,6 +193,15 @@ public final class FolderService {
         return view(p, folders.find(f.id()).orElseThrow());
     }
 
+    /**
+     * Changes a shared folder's default and maximum expiry (owner only). A null argument leaves that setting alone;
+     * blank or {@code never} clears it. Returns how many existing files were shortened.
+     */
+    public int updateExpiry(Principal p, String id, String defaultExpiry, String maxExpiry, boolean applyToExisting) {
+        Folder f = owned(p, id);
+        return expiry.updateFolder(p, f, defaultExpiry, maxExpiry, applyToExisting);
+    }
+
     public void delete(Principal p, String id) {
         Folder f = owned(p, id);
         StoragePath prefix = StoragePath.of(f.storagePrefix());
@@ -201,6 +213,7 @@ public final class FolderService {
             throw new UncheckedIOException(e);
         }
         records.markDeleted(prefix.toString());
+        expiry.onDeleted(prefix);
         for (ForwardJob j : records.jobsForFolder(f.id(), 100_000)) {
             if (j.state() != JobState.SENT && j.state() != JobState.FAILED) {
                 records.updateJob(j.id(), JobState.FAILED, "folder deleted", 0, j.firstFailedAt(), null);

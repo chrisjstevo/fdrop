@@ -53,13 +53,21 @@ public final class FdropMetrics {
             Map.entry("fdrop_users", Set.of("kind")),
             Map.entry("fdrop_app_auth_total", Set.of("protocol", "method", "result")),
             Map.entry("fdrop_app_credentials_expiring", Set.of("type", "within")),
-            Map.entry("fdrop_folders", Set.of("type")));
+            Map.entry("fdrop_folders", Set.of("type")),
+            Map.entry("fdrop_expiry_set_total", Set.of("protocol", "source")),
+            Map.entry("fdrop_expiry_refused_total", Set.of("protocol", "reason")),
+            Map.entry("fdrop_expiry_files", Set.of()),
+            Map.entry("fdrop_expiry_overdue_files", Set.of()),
+            Map.entry("fdrop_expiry_deleted_total", Set.of("backend", "outcome")),
+            Map.entry("fdrop_expiry_delete_lag_seconds", Set.of("backend")));
 
     private final PrometheusMeterRegistry registry;
     private final Duration[] buckets;
     private final AtomicLong httpConnections = new AtomicLong();
     private final AtomicLong sftpSessions = new AtomicLong();
     private final AtomicLong storageUsed = new AtomicLong();
+    private final AtomicLong expiryFiles = new AtomicLong();
+    private final AtomicLong expiryOverdue = new AtomicLong();
     private final MultiGauge users;
     private final MultiGauge appCredentialsExpiring;
     private final MultiGauge folders;
@@ -86,6 +94,8 @@ public final class FdropMetrics {
         Gauge.builder("fdrop.http.connections.active", httpConnections, AtomicLong::get).register(registry);
         Gauge.builder("fdrop.sftp.sessions.active", sftpSessions, AtomicLong::get).register(registry);
         Gauge.builder("fdrop.storage.used", storageUsed, AtomicLong::get).baseUnit("bytes").register(registry);
+        Gauge.builder("fdrop.expiry.files", expiryFiles, AtomicLong::get).register(registry);
+        Gauge.builder("fdrop.expiry.overdue.files", expiryOverdue, AtomicLong::get).register(registry);
         users = MultiGauge.builder("fdrop.users").register(registry);
         appCredentialsExpiring = MultiGauge.builder("fdrop.app.credentials.expiring").register(registry);
         folders = MultiGauge.builder("fdrop.folders").register(registry);
@@ -192,6 +202,37 @@ public final class FdropMetrics {
     public void keycloakCall(String operation, boolean ok, long nanos) {
         timer("fdrop.keycloak.request", "operation", operation, "outcome", ok ? "ok" : "error")
                 .record(nanos, TimeUnit.NANOSECONDS);
+    }
+
+    /**
+     * An expiry set, changed or cleared. {@code protocol} is http, sftp or system (forward keep); {@code source} is
+     * upload, folder_default, home_default, changed, forward_keep or cleared.
+     */
+    public void expirySet(String protocol, String source) {
+        Counter.builder("fdrop.expiry.set").tags("protocol", protocol, "source", source).register(registry)
+                .increment();
+    }
+
+    /** An expiry value refused: {@code syntax}, {@code too_long}, {@code not_allowed} or {@code conflicting}. */
+    public void expiryRefused(String protocol, String reason) {
+        Counter.builder("fdrop.expiry.refused").tags("protocol", protocol, "reason", reason).register(registry)
+                .increment();
+    }
+
+    /** One expiry delete attempt: {@code deleted}, {@code already_gone} or {@code error}. */
+    public void expiryDeleted(String backend, String outcome) {
+        Counter.builder("fdrop.expiry.deleted").tags("backend", backend, "outcome", outcome).register(registry)
+                .increment();
+    }
+
+    /** Time from a file's expiry to its deletion from storage. */
+    public void expiryDeleteLag(String backend, long millis) {
+        timer("fdrop.expiry.delete.lag", "backend", backend).record(Math.max(0, millis), TimeUnit.MILLISECONDS);
+    }
+
+    public void expiryGauges(long files, long overdue) {
+        expiryFiles.set(files);
+        expiryOverdue.set(overdue);
     }
 
     /** Snapshot values refreshed in the background from the metadata DB. */

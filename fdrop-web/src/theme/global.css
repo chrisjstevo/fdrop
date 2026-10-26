@@ -27,8 +27,8 @@ body {
 
 h1 {
   font-size: var(--text-title);
-  line-height: 1.2;
-  font-weight: 400;
+  line-height: 1.25;
+  font-weight: 700;
   margin: 0 0 var(--space-4);
 }
 

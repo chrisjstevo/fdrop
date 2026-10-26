@@ -51,7 +51,11 @@ public final class UploadService {
     private static final long WAIT_FOR_ASSEMBLY_MS = 2_000;
 
     /** What the client asks for when starting an upload. */
-    public record CreateRequest(String path, long size, Long lastModified, String sha256, boolean overwrite) {
+    public record CreateRequest(String path, long size, Long lastModified, String sha256, boolean overwrite,
+                                String expiresIn) {
+        public CreateRequest(String path, long size, Long lastModified, String sha256, boolean overwrite) {
+            this(path, size, lastModified, sha256, overwrite, null);
+        }
     }
 
     /** Session state as the status endpoint reports it. */
@@ -99,6 +103,7 @@ public final class UploadService {
         VirtualPath vp = files.resolver().resolve(p, req.path());
         Optional<ObjectInfo> existing = files.checkWritable(p, vp, req.overwrite());
         files.checkSize(vp.quotaOwner(), req.size(), existing.map(ObjectInfo::size).orElse(0L));
+        String expiresIn = files.expiry().validateExplicit(p, vp, req.expiresIn(), Via.HTTP);
         if (req.sha256() != null && !req.sha256().matches("[0-9a-fA-F]{64}")) {
             throw FdropException.badRequest("sha256 must be 64 hex characters");
         }
@@ -119,7 +124,8 @@ public final class UploadService {
         UploadSession s = new UploadSession(id, p.sub(), vp.virtual(), vp.key().toString(),
                 vp.folder() == null ? null : vp.folder().id(), vp.wentTo(), vp.name(), req.size(), chunkSize,
                 chunkCount, req.sha256() == null ? null : req.sha256().toLowerCase(Locale.ROOT), UploadState.OPEN,
-                backendId, req.overwrite(), clientIp, req.lastModified(), null, now, now, now + ttlMillis());
+                backendId, req.overwrite(), clientIp, req.lastModified(), null, now, now, now + ttlMillis(),
+                expiresIn);
         repo.insert(s);
         return s;
     }
@@ -351,7 +357,8 @@ public final class UploadService {
             }
             repo.transition(s.id(), UploadState.ASSEMBLING, UploadState.COMPLETED, null);
             metrics.assembly(storage.type(), System.nanoTime() - start);
-            recorder.record(p, vp, info, Via.HTTP, clientIp, s.startIp());
+            var rec = recorder.record(p, vp, info, Via.HTTP, clientIp, s.startIp());
+            files.expiry().applyOnCommit(p, vp, s.expiresIn(), Via.HTTP, rec, files.expiry().now());
             return repo.find(s.id()).orElseThrow();
         } catch (RuntimeException | IOException e) {
             String msg = e instanceof FdropException fe ? fe.getMessage() : e.toString();

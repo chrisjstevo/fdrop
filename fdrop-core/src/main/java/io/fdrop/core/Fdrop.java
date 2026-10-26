@@ -9,6 +9,7 @@ import io.fdrop.core.config.FdropConfig;
 import io.fdrop.core.db.AppAccountRepo;
 import io.fdrop.core.db.Db;
 import io.fdrop.core.db.DestinationRepo;
+import io.fdrop.core.db.ExpiryRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
 import io.fdrop.core.db.UploadRepo;
@@ -17,6 +18,8 @@ import io.fdrop.core.metrics.FdropMetrics;
 import io.fdrop.core.service.AccountService;
 import io.fdrop.core.service.AppAccountService;
 import io.fdrop.core.service.DestinationService;
+import io.fdrop.core.service.ExpiryService;
+import io.fdrop.core.service.ExpirySweeper;
 import io.fdrop.core.service.FileService;
 import io.fdrop.core.service.FolderService;
 import io.fdrop.core.service.HostPolicy;
@@ -45,6 +48,7 @@ public final class Fdrop implements AutoCloseable {
     public final DestinationRepo destinations;
     public final UploadRepo uploads;
     public final RecordRepo records;
+    public final ExpiryRepo expiryRepo;
     public final AppAccountRepo appAccountRepo;
     public final OidcClient oidc;
     public final KeycloakAdmin keycloak;
@@ -52,6 +56,8 @@ public final class Fdrop implements AutoCloseable {
     public final TwoFactorService twoFactor;
     public final PathResolver resolver;
     public final UploadRecorder recorder;
+    public final ExpiryService expiry;
+    public final ExpirySweeper expirySweeper;
     public final FileService files;
     public final UploadService uploadService;
     public final FolderService folderService;
@@ -70,6 +76,13 @@ public final class Fdrop implements AutoCloseable {
     /** With a custom OIDC client, for tests that run without Keycloak. */
     public Fdrop(FdropConfig config, StorageBackend backend, SshTools ssh,
                  java.util.function.BiFunction<FdropConfig.Oidc, FdropMetrics, OidcClient> oidcFactory) {
+        this(config, backend, ssh, oidcFactory, java.time.Clock.systemUTC());
+    }
+
+    /** With a custom clock, for tests of time-dependent behaviour such as file expiry. */
+    public Fdrop(FdropConfig config, StorageBackend backend, SshTools ssh,
+                 java.util.function.BiFunction<FdropConfig.Oidc, FdropMetrics, OidcClient> oidcFactory,
+                 java.time.Clock clock) {
         this.config = config;
         this.ssh = ssh;
         this.metrics = new FdropMetrics(config.management.histogramBuckets);
@@ -80,6 +93,7 @@ public final class Fdrop implements AutoCloseable {
         this.destinations = new DestinationRepo(db);
         this.uploads = new UploadRepo(db);
         this.records = new RecordRepo(db);
+        this.expiryRepo = new ExpiryRepo(db);
         this.appAccountRepo = new AppAccountRepo(db);
         this.oidc = oidcFactory.apply(config.auth.oidc, metrics);
         this.keycloak = new KeycloakAdmin(oidc, metrics);
@@ -88,10 +102,13 @@ public final class Fdrop implements AutoCloseable {
                 TwoFactorService.keycloak(keycloak, config.auth.oidc));
         this.resolver = new PathResolver(folders);
         this.recorder = new UploadRecorder(db, records, folders, metrics);
+        this.expiry = new ExpiryService(config, expiryRepo, records, resolver, storage, metrics, clock);
+        this.expirySweeper = new ExpirySweeper(config, db, expiryRepo, records, users, folders, storage, expiry,
+                metrics, clock);
         this.files = new FileService(config, storage, resolver, users, folders, destinations, uploads, records,
-                recorder);
+                recorder, expiry);
         this.uploadService = new UploadService(config, storage, files, uploads, users, recorder, records, metrics);
-        this.folderService = new FolderService(db, folders, destinations, users, records, storage, resolver);
+        this.folderService = new FolderService(db, folders, destinations, users, records, storage, resolver, expiry);
         this.hostPolicy = new HostPolicy(config.forward.allowedHosts);
         this.destinationService = new DestinationService(destinations, folders, users, records, ssh,
                 SecretBox.fromBase64(config.forward.encryptionKey), hostPolicy);
@@ -108,6 +125,7 @@ public final class Fdrop implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        expirySweeper.close();
         janitor.close();
         storage.close();
         db.close();
