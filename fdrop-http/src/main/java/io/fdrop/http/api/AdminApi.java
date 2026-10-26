@@ -86,6 +86,21 @@ public final class AdminApi {
         r.delete("/api/v1/admin/app-accounts/{id}/ssh-keys/{keyId}", ctx -> Response.json(
                 app.appAccounts.deleteSshKey(ctx.principal(), ctx.param("id"), ctx.param("keyId"))));
 
+        r.get("/api/v1/admin/storage/encryption", ctx -> Response.json(encryption(
+                app.encryptionService.status(ctx.principal()))));
+        r.post("/api/v1/admin/storage/encryption/inventory", ctx -> {
+            app.encryptionService.refreshInventory(ctx.principal());
+            return Response.json(encryption(app.encryptionService.status(ctx.principal())));
+        });
+        r.post("/api/v1/admin/storage/encryption/reencrypt", ctx -> {
+            JsonNode b = ctx.jsonTree();
+            app.encryptionService.start(ctx.principal(), opt(b, "fromKeyId"), b.path("plaintext").asBoolean(false));
+            return Response.json(202, encryption(app.encryptionService.status(ctx.principal())));
+        });
+        r.delete("/api/v1/admin/storage/encryption/reencrypt", ctx -> {
+            app.encryptionService.cancel(ctx.principal());
+            return Response.json(encryption(app.encryptionService.status(ctx.principal())));
+        });
         r.get("/api/v1/admin/forward-destinations", ctx -> Response.json(app.destinationService.list(ctx.principal())));
         r.post("/api/v1/admin/forward-destinations", ctx -> Response.json(201,
                 app.destinationService.create(ctx.principal(), input(ctx.jsonTree()))));
@@ -118,6 +133,36 @@ public final class AdminApi {
         UserAdminService.Created c = app.userAdmin.create(ctx.principal(), FilesApi.text(b, "username"),
                 opt(b, "email"), opt(b, "firstName"), opt(b, "lastName"), b.path("admin").asBoolean(false));
         return Response.json(201, c);
+    }
+
+    /** The encryption status as the admin screen reads it; never any key material. */
+    private static Map<String, Object> encryption(io.fdrop.core.service.EncryptionService.Status s) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("enabled", s.enabled());
+        m.put("provider", s.provider());
+        m.put("primaryKeyId", s.primaryKeyId());
+        m.put("allowPlaintextReads", s.allowPlaintextReads());
+        List<Map<String, Object>> inv = new ArrayList<>();
+        s.inventory().forEach((k, c) -> inv.add(Map.of("keyId", k, "objects", c.objects(), "bytes", c.bytes(),
+                "countedAt", java.time.Instant.ofEpochMilli(c.countedAt()).toString())));
+        m.put("inventory", inv);
+        s.job().ifPresent(j -> {
+            Map<String, Object> jm = new java.util.LinkedHashMap<>();
+            jm.put("id", j.id());
+            jm.put("scope", j.scope());
+            jm.put("fromKeyId", j.fromKeyId());
+            jm.put("state", j.state());
+            jm.put("objectsTotal", j.objectsTotal());
+            jm.put("objectsDone", j.objectsDone());
+            jm.put("objectsFailed", j.objectsFailed());
+            jm.put("bytesDone", j.bytesDone());
+            jm.put("startedAt", java.time.Instant.ofEpochMilli(j.startedAt()).toString());
+            jm.put("finishedAt", j.finishedAt() == null ? null : java.time.Instant.ofEpochMilli(j.finishedAt()).toString());
+            m.put("job", jm);
+        });
+        m.put("recentFailures", s.recentFailures().stream().map(f -> Map.of("storageKey", f.storageKey(),
+                "reason", f.reason(), "at", java.time.Instant.ofEpochMilli(f.at()).toString())).toList());
+        return m;
     }
 
     /** An application account's view plus its home default expiry, which lives with the file settings. */

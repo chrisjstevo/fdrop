@@ -8,6 +8,7 @@ import { Empty, ErrorNote, Logo } from "./components/ui";
 import { AccountPage } from "./pages/AccountPage";
 import { AdminApplicationPage, AdminApplicationsPage } from "./pages/AdminApplicationsPage";
 import { AdminDestinationPage, AdminDestinationsPage } from "./pages/AdminDestinationsPage";
+import { AdminEncryptionPage } from "./pages/AdminEncryptionPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { FilesPage } from "./pages/FilesPage";
 import { FolderDetailPage, FoldersPage } from "./pages/FoldersPage";
@@ -119,6 +120,7 @@ function SignedIn() {
             <Route path="/admin/applications/:id" element={<Admin><AdminApplicationPage /></Admin>} />
             <Route path="/admin/destinations" element={<Admin><AdminDestinationsPage /></Admin>} />
             <Route path="/admin/destinations/:id" element={<Admin><AdminDestinationPage /></Admin>} />
+            <Route path="/admin/encryption" element={<Admin><AdminEncryptionPage /></Admin>} />
             <Route path="*" element={<Empty title="Page not found" />} />
           </Routes>
         </Layout>

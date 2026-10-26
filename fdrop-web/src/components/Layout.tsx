@@ -13,6 +13,7 @@ import {
   ForwardIcon,
   HomeIcon,
   ListIcon,
+  LockIcon,
   MenuIcon,
   MoonIcon,
   PlusIcon,
@@ -44,6 +45,7 @@ const NAV: NavItem[] = [
   { to: "/admin/users", label: "Users", icon: <UserIcon />, admin: true },
   { to: "/admin/applications", label: "Applications", icon: <AppIcon />, admin: true },
   { to: "/admin/destinations", label: "Destinations", icon: <ServerIcon />, admin: true },
+  { to: "/admin/encryption", label: "Encryption", icon: <LockIcon />, admin: true },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

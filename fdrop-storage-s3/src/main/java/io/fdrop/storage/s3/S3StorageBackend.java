@@ -559,11 +559,17 @@ public final class S3StorageBackend implements StorageBackend {
             }
             try {
                 UploadPartResponse r = s3.uploadPart(req.build(), RequestBody.fromInputStream(in, length));
+                if (in.failure != null) {
+                    throw in.failure;
+                }
                 if (in.count < length) {
                     throw new IOException("part " + partNumber + " is short: " + in.count + " of " + length);
                 }
                 return new PartInfo(partNumber, length, r.eTag(), sha256Hex);
             } catch (S3Exception e) {
+                if (in.failure != null) {
+                    throw in.failure;
+                }
                 if (in.count < length) {
                     throw new IOException("part " + partNumber + " is short: " + in.count + " of " + length, e);
                 }
@@ -577,6 +583,9 @@ public final class S3StorageBackend implements StorageBackend {
                 }
                 throw io("upload part " + partNumber, e);
             } catch (RuntimeException e) {
+                if (in.failure != null) {
+                    throw in.failure;
+                }
                 if (in.count < length) {
                     throw new IOException("part " + partNumber + " is short: " + in.count + " of " + length, e);
                 }
@@ -630,6 +639,8 @@ public final class S3StorageBackend implements StorageBackend {
         private final InputStream in;
         private final long limit;
         long count;
+        /** The source's own failure (a SHA-256 mismatch from the encryption layer, say), which the SDK wraps. */
+        IOException failure;
 
         CountingInput(InputStream in, long limit) {
             this.in = in;
@@ -641,7 +652,13 @@ public final class S3StorageBackend implements StorageBackend {
             if (count >= limit) {
                 return -1;
             }
-            int b = in.read();
+            int b;
+            try {
+                b = in.read();
+            } catch (IOException e) {
+                failure = e;
+                throw e;
+            }
             if (b >= 0) {
                 count++;
             }
@@ -653,7 +670,13 @@ public final class S3StorageBackend implements StorageBackend {
             if (count >= limit) {
                 return -1;
             }
-            int n = in.read(b, off, (int) Math.min(len, limit - count));
+            int n;
+            try {
+                n = in.read(b, off, (int) Math.min(len, limit - count));
+            } catch (IOException e) {
+                failure = e;
+                throw e;
+            }
             if (n > 0) {
                 count += n;
             }

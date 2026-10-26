@@ -144,7 +144,8 @@ public abstract class StorageContract {
         byte[] p2 = bytes(part, 11);
         byte[] p3 = bytes(1234, 12);
         StoragePath target = StoragePath.of("users/u1/big.bin");
-        MultipartUpload mp = s.beginMultipart(target, WriteOptions.DEFAULT);
+        // total and part size up front, as resumable uploads give them (encryption at rest needs both)
+        MultipartUpload mp = s.beginMultipart(target, new WriteOptions(null, false, 2L * part + p3.length, part));
         PartInfo i2 = mp.putPart(2, Channels.newChannel(new java.io.ByteArrayInputStream(p2)), p2.length,
                 Hashing.sha256Hex(p2));
         // a different handle, as after a restart
@@ -163,7 +164,8 @@ public abstract class StorageContract {
     @Test
     public void multipartRejectsWrongHashAndShortParts() throws Exception {
         StorageBackend s = backend();
-        MultipartUpload mp = s.beginMultipart(StoragePath.of("users/u1/bad.bin"), WriteOptions.DEFAULT);
+        MultipartUpload mp = s.beginMultipart(StoragePath.of("users/u1/bad.bin"),
+                new WriteOptions(null, false, 1000, minPartSize()));
         byte[] data = bytes(1000, 13);
         assertThatThrownBy(() -> mp.putPart(1, Channels.newChannel(new java.io.ByteArrayInputStream(data)),
                 data.length, "00".repeat(32))).isInstanceOf(IOException.class).hasMessageContaining("SHA-256");

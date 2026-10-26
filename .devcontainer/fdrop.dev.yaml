@@ -33,5 +33,11 @@ storage:
   type: local
   local:
     root: ./data/files
+  encryption:
+    # fixed development key; generate your own for anything real: echo "k1:$(openssl rand -base64 32)"
+    local:
+      keys: ${FDROP_STORAGE_ENCRYPTION_LOCAL_KEYS:-dev1:ZmRyb3AtZGV2LXN0b3JhZ2Uta2V5LW5vdC1zZWNyZXQ=}
+    # files stored before encryption was added are still served; encrypt them with the re-encryption job
+    allowPlaintextReads: true
 db:
   url: jdbc:h2:file:./data/meta;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH

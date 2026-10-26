@@ -156,6 +156,48 @@ public class FdropConfig {
         public String type = "local";
         public Local local = new Local();
         public S3 s3 = new S3();
+        public Encryption encryption = new Encryption();
+    }
+
+    /** Encryption at rest (see SPEC.md). */
+    public static class Encryption {
+        /** Encrypt new files. Encrypted files are always decrypted, whatever this says. */
+        public boolean enabled = true;
+        /** local | aws-kms | vault */
+        public String keyProvider = "local";
+        public EncryptionLocal local = new EncryptionLocal();
+        public AwsKms awsKms = new AwsKms();
+        public Vault vault = new Vault();
+        public DekCache dekCache = new DekCache();
+        /** Serve objects without the encryption header as they are; only while migrating an unencrypted store. */
+        public boolean allowPlaintextReads = false;
+        public Reencrypt reencrypt = new Reencrypt();
+    }
+
+    public static class EncryptionLocal {
+        /** {@code id:base64key,…}, 32-byte keys, the first primary. From an env var or secret, never the image. */
+        public String keys = "";
+    }
+
+    public static class AwsKms {
+        public String keyId;
+        public String region;
+        public String endpointOverride;
+    }
+
+    public static class Vault {
+        public String address;
+        public String transitKey = "fdrop";
+        public String tokenFile = "/run/secrets/vault-token";
+    }
+
+    public static class DekCache {
+        public int maxEntries = 10_000;
+        public String ttl = "10m";
+    }
+
+    public static class Reencrypt {
+        public DataSize bytesPerSecond = DataSize.ofMiB(50);
     }
 
     public static class Local {

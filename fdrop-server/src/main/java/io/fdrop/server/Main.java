@@ -39,6 +39,7 @@ public final class Main {
 
         app.janitor.start();
         app.expirySweeper.start();
+        app.encryptionService.start();
         ManagementServer management = new ManagementServer(app).start();
         HttpServer http = new HttpServer(app).start();
         SftpServer sftp = cfg.sftp.enabled ? new SftpServer(app).start() : null;

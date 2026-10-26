@@ -29,6 +29,7 @@ public final class TestSupport {
         cfg.forward.encryptionKey = Base64.getEncoder().encodeToString(new byte[32]);
         cfg.forward.allowedHosts.add("sftp.test.invalid");
         cfg.limits.defaultQuota = io.fdrop.core.config.DataSize.ofMiB(100);
+        cfg.storage.encryption.local.keys = "test1:" + Base64.getEncoder().encodeToString(new byte[32]);
         return cfg;
     }
 

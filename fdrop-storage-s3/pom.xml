@@ -36,6 +36,21 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>aws-crt-client</artifactId>
     </dependency>
+    <dependency>
+      <!-- the aws-kms key provider for encryption at rest -->
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>kms</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>netty-nio-client</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>apache-client</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
 
     <dependency>
       <groupId>io.fdrop</groupId>

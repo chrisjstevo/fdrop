@@ -19,6 +19,7 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock                  # Testcontainers uses Podman's Docker-compatible API
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: ${PODMAN_SOCKET:-/run/podman/podman.sock}
       TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED: "true"
+      TESTCONTAINERS_HOST_OVERRIDE: host.containers.internal   # test containers publish their ports on the host, not on dev's localhost
     volumes:
       - ..:/workspaces/fdrop:z
       - fdrop-m2:/home/vscode/.m2

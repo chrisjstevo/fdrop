@@ -137,3 +137,10 @@ export const MoonIcon = ({ size }: P) => (
     <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
   </Svg>
 );
+
+export const LockIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  </Svg>
+);

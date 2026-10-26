@@ -308,3 +308,26 @@ export interface AppCreated {
   account: AppAccount;
   password?: string;
 }
+
+/** Encryption at rest, as the admin screen shows it; never any key material. */
+export interface EncryptionStatus {
+  enabled: boolean;
+  provider?: string;
+  primaryKeyId?: string;
+  allowPlaintextReads: boolean;
+  /** Stored objects per KEK id from the last inventory; "plaintext" counts unencrypted ones. */
+  inventory: { keyId: string; objects: number; bytes: number; countedAt: string }[];
+  job?: {
+    id: string;
+    scope: "KEY" | "PLAINTEXT";
+    fromKeyId?: string;
+    state: "SCANNING" | "RUNNING" | "FINISHED" | "CANCELLED" | "FAILED";
+    objectsTotal: number;
+    objectsDone: number;
+    objectsFailed: number;
+    bytesDone: number;
+    startedAt: string;
+    finishedAt?: string;
+  };
+  recentFailures: { storageKey: string; reason: string; at: string }[];
+}

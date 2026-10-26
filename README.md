@@ -40,6 +40,11 @@ starts Keycloak (with the dev realm), Prometheus and a throwaway SFTP destinatio
 java -jar fdrop-server/target/fdrop-server.jar # start fdrop with .devcontainer/fdrop.dev.yaml
 ```
 
+The integration tests that need containers (S3 and KMS on LocalStack, among others) start them through the host's
+Podman socket. They run beside the dev container, so the dev container is set up to reach them at
+`host.containers.internal` (`TESTCONTAINERS_HOST_OVERRIDE` in `compose.yaml`). Recreate the dev container after
+pulling this change; until then those tests are skipped.
+
 Then open https://localhost:8443. fdrop serves HTTPS only, with a development certificate the dev container's
 `certs` step creates when the stack starts (see [Development certificates](#development-certificates)); your
 browser warns about it until you trust the dev CA. Dev users (development only):
@@ -251,6 +256,14 @@ password and then a code (`sftp -o PreferredAuthentications=keyboard-interactive
 
 Expired files disappear at once and are deleted by the sweeper within about `expiry.sweepInterval` (30 s).
 
+### Encryption at rest
+
+Every stored file is encrypted (see SPEC.md, Encryption at rest). The dev config has a fixed development key and
+`allowPlaintextReads: true`, so files stored in `data/files` before encryption was added are still served. To
+encrypt them, open **Admin: Encryption**, press **Count objects now**, then **Encrypt** on the "Not encrypted"
+row. For anything real, make a key with `echo "k1:$(openssl rand -base64 32)"` and pass it as
+`FDROP_STORAGE_ENCRYPTION_LOCAL_KEYS`; fdrop refuses to start with encryption on and no working key.
+
 ## Configuration
 
 `fdrop.yaml` (or `$FDROP_CONFIG`); every key can be overridden with an environment variable named after its path,
@@ -275,6 +288,9 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 - SFTP resume copies the existing file into the new upload rather than using S3's server-side part copy, and
   out-of-order SFTP writes are accepted within a 16 MiB window.
 - Browser sessions are held in memory: a restart signs users out, and several nodes need sticky sessions.
+- Encryption at rest: SFTP spool files are not written at all yet (out-of-order writes are held in memory), so
+  there is nothing to encrypt there. Several encrypted reads of the same object each fetch its header once per
+  node until it is cached; nothing is shared between nodes.
 - File expiry: the sweeper claims due rows with a conditional `UPDATE` (as forward workers claim jobs) rather than
   `SELECT … FOR UPDATE SKIP LOCKED`, and uses the nodes' clocks rather than the database's, since every timestamp
   in the schema is epoch milliseconds written by fdrop. S3 objects are deleted one `DeleteObject` at a time, after a

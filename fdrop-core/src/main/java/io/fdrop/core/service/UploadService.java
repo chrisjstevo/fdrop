@@ -114,7 +114,7 @@ public final class UploadService {
         if (chunkCount > 0) {
             try {
                 MultipartUpload mp = storage.beginMultipart(vp.key(), new WriteOptions(null, req.overwrite(),
-                        req.size()));
+                        req.size(), chunkSize));
                 backendId = mp.id();
             } catch (IOException e) {
                 throw new UncheckedIOException(e);

@@ -84,6 +84,31 @@ groups:
         annotations:
           summary: 95th percentile upload assembly time is over 5 minutes
 
+      - alert: FdropDecryptionFailures
+        expr: increase(fdrop_encryption_failures_total{job="fdrop"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A stored file failed authentication on read; it was altered, damaged or cut short (see Admin, Encryption)
+
+      - alert: FdropKmsErrors
+        expr: |
+          sum(rate(fdrop_encryption_kek_seconds_count{job="fdrop",outcome="error"}[5m]))
+            / sum(rate(fdrop_encryption_kek_seconds_count{job="fdrop"}[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The key-encryption key provider is failing; uploads and downloads of encrypted files fail with it
+
+      - alert: FdropPlaintextObjects
+        expr: max(fdrop_encryption_objects{job="fdrop",key_id="plaintext"}) > 0
+        for: 7d
+        labels:
+          severity: warning
+        annotations:
+          summary: Unencrypted files are still stored a week on; run the re-encryption job with plaintext true
+
       - alert: FdropExpiryOverdue
         expr: max(fdrop_expiry_overdue_files{job="fdrop"}) > 0
         for: 55m

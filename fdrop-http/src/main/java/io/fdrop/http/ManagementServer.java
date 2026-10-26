@@ -121,6 +121,27 @@ public final class ManagementServer implements AutoCloseable {
         return text(200, app.metrics.scrape(accept), type);
     }
 
+    private volatile long keysCheckedAt;
+    private volatile boolean keysUp = true;
+
+    /** Wraps and unwraps a test key with the primary KEK, at most once a minute. */
+    private boolean keys() {
+        if (!app.config.storage.encryption.enabled) {
+            return true;
+        }
+        long now = System.currentTimeMillis();
+        if (now - keysCheckedAt > 60_000) {
+            try {
+                app.encryption.checkKeys();
+                keysUp = true;
+            } catch (Exception e) {
+                keysUp = false;
+            }
+            keysCheckedAt = now;
+        }
+        return keysUp;
+    }
+
     private FullHttpResponse ready() {
         boolean db = app.db.ping();
         boolean storage;
@@ -130,12 +151,15 @@ public final class ManagementServer implements AutoCloseable {
         } catch (Exception e) {
             storage = false;
         }
+        boolean keys = keys();
+        boolean up = db && storage && keys;
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", db && storage ? (keycloakUp ? "ready" : "degraded") : "not ready");
+        body.put("status", up ? (keycloakUp ? "ready" : "degraded") : "not ready");
         body.put("db", db ? "up" : "down");
         body.put("storage", storage ? "up" : "down");
+        body.put("encryptionKeys", app.config.storage.encryption.enabled ? (keys ? "up" : "down") : "off");
         body.put("keycloak", keycloakUp ? "up" : "unreachable");
-        return text(db && storage ? 200 : 503, new String(Json.bytes(body), StandardCharsets.UTF_8) + "\n",
+        return text(up ? 200 : 503, new String(Json.bytes(body), StandardCharsets.UTF_8) + "\n",
                 "application/json");
     }
 

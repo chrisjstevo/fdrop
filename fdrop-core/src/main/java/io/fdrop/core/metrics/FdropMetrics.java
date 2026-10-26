@@ -59,7 +59,14 @@ public final class FdropMetrics {
             Map.entry("fdrop_expiry_files", Set.of()),
             Map.entry("fdrop_expiry_overdue_files", Set.of()),
             Map.entry("fdrop_expiry_deleted_total", Set.of("backend", "outcome")),
-            Map.entry("fdrop_expiry_delete_lag_seconds", Set.of("backend")));
+            Map.entry("fdrop_expiry_delete_lag_seconds", Set.of("backend")),
+            Map.entry("fdrop_encryption_bytes_total", Set.of("operation")),
+            Map.entry("fdrop_encryption_failures_total", Set.of("reason")),
+            Map.entry("fdrop_encryption_plaintext_reads_total", Set.of()),
+            Map.entry("fdrop_encryption_kek_seconds", Set.of("provider", "operation", "outcome")),
+            Map.entry("fdrop_encryption_dek_cache_total", Set.of("result")),
+            Map.entry("fdrop_encryption_objects", Set.of("key_id")),
+            Map.entry("fdrop_encryption_reencrypt_objects", Set.of("state")));
 
     private final PrometheusMeterRegistry registry;
     private final Duration[] buckets;
@@ -73,6 +80,8 @@ public final class FdropMetrics {
     private final MultiGauge folders;
     private final MultiGauge uploadSessions;
     private final MultiGauge forwardJobs;
+    private final MultiGauge encryptionObjects;
+    private final MultiGauge reencryptObjects;
 
     public FdropMetrics(List<Double> bucketSeconds) {
         this.registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
@@ -101,6 +110,8 @@ public final class FdropMetrics {
         folders = MultiGauge.builder("fdrop.folders").register(registry);
         uploadSessions = MultiGauge.builder("fdrop.upload.sessions").register(registry);
         forwardJobs = MultiGauge.builder("fdrop.forward.jobs").register(registry);
+        encryptionObjects = MultiGauge.builder("fdrop.encryption.objects").register(registry);
+        reencryptObjects = MultiGauge.builder("fdrop.encryption.reencrypt.objects").register(registry);
     }
 
     public MeterRegistry registry() {
@@ -233,6 +244,48 @@ public final class FdropMetrics {
     public void expiryGauges(long files, long overdue) {
         expiryFiles.set(files);
         expiryOverdue.set(overdue);
+    }
+
+    /** Plaintext bytes through the encryption layer: {@code encrypt} or {@code decrypt}. */
+    public void encryptionBytes(String operation, long bytes) {
+        if (bytes > 0) {
+            Counter.builder("fdrop.encryption").baseUnit("bytes").tags("operation", operation).register(registry)
+                    .increment(bytes);
+        }
+    }
+
+    /** A read refused because a stored object failed authentication. */
+    public void encryptionFailure(String reason) {
+        Counter.builder("fdrop.encryption.failures").tags("reason", reason).register(registry).increment();
+    }
+
+    public void plaintextRead() {
+        Counter.builder("fdrop.encryption.plaintext.reads").register(registry).increment();
+    }
+
+    /** A call to the key-encryption key provider. */
+    public void kek(String provider, String operation, boolean ok, long nanos) {
+        timer("fdrop.encryption.kek", "provider", provider, "operation", operation, "outcome", ok ? "ok" : "error")
+                .record(nanos, TimeUnit.NANOSECONDS);
+    }
+
+    public void dekCache(boolean hit) {
+        Counter.builder("fdrop.encryption.dek.cache").tags("result", hit ? "hit" : "miss").register(registry)
+                .increment();
+    }
+
+    /** Stored objects per KEK id ({@code plaintext} for unencrypted ones), from the inventory. */
+    public void encryptionObjects(Map<String, Long> byKeyId) {
+        List<MultiGauge.Row<?>> rows = new ArrayList<>();
+        byKeyId.forEach((k, v) -> rows.add(MultiGauge.Row.of(Tags.of("key_id", k), v)));
+        encryptionObjects.register(rows, true);
+    }
+
+    /** Objects in the running re-encryption job, by state. */
+    public void reencryptObjects(Map<String, Long> byState) {
+        List<MultiGauge.Row<?>> rows = new ArrayList<>();
+        byState.forEach((k, v) -> rows.add(MultiGauge.Row.of(Tags.of("state", k), v)));
+        reencryptObjects.register(rows, true);
     }
 
     /** Snapshot values refreshed in the background from the metadata DB. */

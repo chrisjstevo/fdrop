@@ -65,6 +65,22 @@ storage:
     endpointOverride: null   # e.g. http://minio:9000
     pathStyle: false
     sse: AES256
+  encryption:                # encryption at rest, see SPEC.md
+    enabled: true            # encrypt new files; encrypted files are always decrypted
+    keyProvider: local       # local | aws-kms | vault
+    local:
+      keys: ${FDROP_STORAGE_ENCRYPTION_LOCAL_KEYS}   # "id:base64key,…", 32-byte keys, first is primary
+    awsKms:
+      keyId: null            # e.g. arn:aws:kms:eu-west-1:111122223333:key/…
+      region: eu-west-1
+    vault:
+      address: null          # e.g. https://vault.internal:8200
+      transitKey: fdrop
+      tokenFile: /run/secrets/vault-token
+    dekCache: { maxEntries: 10000, ttl: 10m }
+    allowPlaintextReads: false   # true only while migrating a store that holds unencrypted files
+    reencrypt:
+      bytesPerSecond: 50MiB  # per node
 upload:
   chunkSize: 8MiB
   ttl: 24h

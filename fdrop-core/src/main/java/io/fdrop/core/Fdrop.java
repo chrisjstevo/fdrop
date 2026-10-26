@@ -5,10 +5,14 @@ import io.fdrop.core.auth.KeycloakAdmin;
 import io.fdrop.core.auth.OidcClient;
 import io.fdrop.core.auth.TwoFactorService;
 import io.fdrop.core.auth.UserStatusCache;
+import io.fdrop.core.audit.Audit;
 import io.fdrop.core.config.FdropConfig;
+import io.fdrop.core.crypto.EncryptingStorage;
+import io.fdrop.core.crypto.KeyProviders;
 import io.fdrop.core.db.AppAccountRepo;
 import io.fdrop.core.db.Db;
 import io.fdrop.core.db.DestinationRepo;
+import io.fdrop.core.db.EncryptionRepo;
 import io.fdrop.core.db.ExpiryRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
@@ -18,6 +22,7 @@ import io.fdrop.core.metrics.FdropMetrics;
 import io.fdrop.core.service.AccountService;
 import io.fdrop.core.service.AppAccountService;
 import io.fdrop.core.service.DestinationService;
+import io.fdrop.core.service.EncryptionService;
 import io.fdrop.core.service.ExpiryService;
 import io.fdrop.core.service.ExpirySweeper;
 import io.fdrop.core.service.FileService;
@@ -43,6 +48,7 @@ public final class Fdrop implements AutoCloseable {
     public final FdropMetrics metrics;
     public final Db db;
     public final StorageBackend storage;
+    public final EncryptingStorage encryption;
     public final UserRepo users;
     public final FolderRepo folders;
     public final DestinationRepo destinations;
@@ -58,6 +64,7 @@ public final class Fdrop implements AutoCloseable {
     public final UploadRecorder recorder;
     public final ExpiryService expiry;
     public final ExpirySweeper expirySweeper;
+    public final EncryptionService encryptionService;
     public final FileService files;
     public final UploadService uploadService;
     public final FolderService folderService;
@@ -87,7 +94,8 @@ public final class Fdrop implements AutoCloseable {
         this.ssh = ssh;
         this.metrics = new FdropMetrics(config.management.histogramBuckets);
         this.db = new Db(config.db, metrics.registry());
-        this.storage = new InstrumentedStorage(backend, metrics);
+        this.encryption = encryptingStorage(config, backend, metrics);
+        this.storage = encryption;
         this.users = new UserRepo(db);
         this.folders = new FolderRepo(db);
         this.destinations = new DestinationRepo(db);
@@ -118,14 +126,36 @@ public final class Fdrop implements AutoCloseable {
                 new ClientCertificates(config.auth.applications.mtls), metrics,
                 AppAccountService.keycloak(keycloak, userStatus, config));
         this.accounts = new AccountService(config, users, uploads, records, folders, destinations, resolver, ssh);
+        this.encryptionService = new EncryptionService(config, encryption, new EncryptionRepo(db), metrics);
         this.janitor = new Janitor(config, db, uploads, uploadService, records, folders, destinations, users, storage,
                 metrics, appAccounts);
         records.resetStuckSending(Long.MAX_VALUE);
     }
 
+    /** The backend, timed, wrapped in encryption at rest; with encryption on, a broken KEK stops startup. */
+    private static EncryptingStorage encryptingStorage(FdropConfig config, StorageBackend backend,
+                                                       FdropMetrics metrics) {
+        FdropConfig.Encryption cfg = config.storage.encryption;
+        try {
+            EncryptingStorage s = new EncryptingStorage(new InstrumentedStorage(backend, metrics),
+                    KeyProviders.load(cfg), cfg, metrics);
+            if (cfg.enabled) {
+                s.checkKeys();
+            }
+            Audit.log("storage.encryption.start", "enabled", cfg.enabled, "provider",
+                    s.keyProvider() == null ? null : s.keyProvider().name(),
+                    "primaryKeyId", s.keyProvider() == null ? null : s.keyProvider().primaryKeyId());
+            return s;
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("encryption at rest: the key provider does not work: " + e.getMessage(),
+                    e);
+        }
+    }
+
     @Override
     public void close() throws Exception {
         expirySweeper.close();
+        encryptionService.close();
         janitor.close();
         storage.close();
         db.close();

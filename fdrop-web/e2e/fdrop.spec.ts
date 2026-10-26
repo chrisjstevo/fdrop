@@ -43,7 +43,7 @@ test("admin screens are admin-only", async ({ page }) => {
 
 test("main pages have no accessibility violations", async ({ page }) => {
   await signIn(page, "admin");
-  for (const path of ["/files/home", "/uploads", "/folders", "/account", "/admin/destinations"]) {
+  for (const path of ["/files/home", "/uploads", "/folders", "/account", "/admin/destinations", "/admin/encryption"]) {
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag22aa"]).analyze();
