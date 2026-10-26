@@ -256,6 +256,13 @@ password and then a code (`sftp -o PreferredAuthentications=keyboard-interactive
 
 Expired files disappear at once and are deleted by the sweeper within about `expiry.sweepInterval` (30 s).
 
+### Trying search
+
+Type in the search box at the top: matching names from everywhere you can see appear as you type, and Enter
+searches names and contents. The index lives in `data/search` and catches up with new uploads within a few seconds;
+**Admin: Search index** shows how far behind it is and can rebuild it. Text is read from documents by Apache Tika in a
+separate short-lived JVM per file.
+
 ### Encryption at rest
 
 Every stored file is encrypted (see SPEC.md, Encryption at rest). The dev config has a fixed development key and
@@ -288,6 +295,10 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 - SFTP resume copies the existing file into the new upload rather than using S3's server-side part copy, and
   out-of-order SFTP writes are accepted within a 16 MiB window.
 - Browser sessions are held in memory: a restart signs users out, and several nodes need sticky sessions.
+- Search: text is extracted in a separate JVM that fdrop starts itself (`ExtractMain`, with `-Xmx` and a time
+  limit) rather than through Tika's `ForkParser`; the forked JVM is not cut off from the network. Tika is limited to
+  the parser modules for the formats the spec lists, not its whole standard package. A `429` from the search API
+  carries no `Retry-After` header. Each node rebuilds and searches its own index; there is no rolling rebuild.
 - Encryption at rest: SFTP spool files are not written at all yet (out-of-order writes are held in memory), so
   there is nothing to encrypt there. Several encrypted reads of the same object each fetch its header once per
   node until it is cached; nothing is shared between nodes.

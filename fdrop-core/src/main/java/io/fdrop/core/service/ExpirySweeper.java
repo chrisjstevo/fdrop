@@ -7,6 +7,7 @@ import io.fdrop.core.db.Db;
 import io.fdrop.core.db.ExpiryRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.metrics.FdropMetrics;
 import io.fdrop.core.model.Records.FileExpiry;
@@ -50,6 +51,7 @@ public final class ExpirySweeper implements AutoCloseable {
     private final FolderRepo folders;
     private final StorageBackend storage;
     private final ExpiryService expiry;
+    private final SearchRepo search;
     private final FdropMetrics metrics;
     private final Clock clock;
     private final String node;
@@ -62,7 +64,8 @@ public final class ExpirySweeper implements AutoCloseable {
 
     public ExpirySweeper(FdropConfig cfg, Db db, ExpiryRepo repo, RecordRepo records, UserRepo users,
                          FolderRepo folders, StorageBackend storage, ExpiryService expiry, FdropMetrics metrics,
-                         Clock clock) {
+                         Clock clock, SearchRepo search) {
+        this.search = search;
         this.cfg = cfg.expiry;
         this.db = db;
         this.repo = repo;
@@ -170,6 +173,7 @@ public final class ExpirySweeper implements AutoCloseable {
                     users.addUsage(owner, -o.get().size());
                 }
                 records.markExpired(e.storageKey());
+                search.append(SearchRepo.Op.DELETE, e.storageKey(), null);
                 return true;
             });
             if (!ours) {

@@ -6,6 +6,7 @@ import io.fdrop.core.db.Db;
 import io.fdrop.core.db.DestinationRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Enums.FolderType;
@@ -49,9 +50,11 @@ public final class FolderService {
     private final StorageBackend storage;
     private final PathResolver resolver;
     private final ExpiryService expiry;
+    private final SearchRepo search;
 
     public FolderService(Db db, FolderRepo folders, DestinationRepo destinations, UserRepo users, RecordRepo records,
-                         StorageBackend storage, PathResolver resolver, ExpiryService expiry) {
+                         StorageBackend storage, PathResolver resolver, ExpiryService expiry, SearchRepo search) {
+        this.search = search;
         this.db = db;
         this.folders = folders;
         this.destinations = destinations;
@@ -214,6 +217,7 @@ public final class FolderService {
         }
         records.markDeleted(prefix.toString());
         expiry.onDeleted(prefix);
+        search.append(SearchRepo.Op.DELETE, prefix.toString(), null);
         for (ForwardJob j : records.jobsForFolder(f.id(), 100_000)) {
             if (j.state() != JobState.SENT && j.state() != JobState.FAILED) {
                 records.updateJob(j.id(), JobState.FAILED, "folder deleted", 0, j.firstFailedAt(), null);

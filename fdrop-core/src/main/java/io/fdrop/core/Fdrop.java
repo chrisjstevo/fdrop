@@ -16,6 +16,10 @@ import io.fdrop.core.db.EncryptionRepo;
 import io.fdrop.core.db.ExpiryRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
+import io.fdrop.core.search.NoSearch;
+import io.fdrop.core.search.SearchService;
+import io.fdrop.core.search.SearchServiceFactory;
 import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.metrics.FdropMetrics;
@@ -55,6 +59,7 @@ public final class Fdrop implements AutoCloseable {
     public final UploadRepo uploads;
     public final RecordRepo records;
     public final ExpiryRepo expiryRepo;
+    public final SearchRepo searchRepo;
     public final AppAccountRepo appAccountRepo;
     public final OidcClient oidc;
     public final KeycloakAdmin keycloak;
@@ -65,6 +70,7 @@ public final class Fdrop implements AutoCloseable {
     public final ExpiryService expiry;
     public final ExpirySweeper expirySweeper;
     public final EncryptionService encryptionService;
+    public final SearchService search;
     public final FileService files;
     public final UploadService uploadService;
     public final FolderService folderService;
@@ -102,6 +108,7 @@ public final class Fdrop implements AutoCloseable {
         this.uploads = new UploadRepo(db);
         this.records = new RecordRepo(db);
         this.expiryRepo = new ExpiryRepo(db);
+        this.searchRepo = new SearchRepo(db);
         this.appAccountRepo = new AppAccountRepo(db);
         this.oidc = oidcFactory.apply(config.auth.oidc, metrics);
         this.keycloak = new KeycloakAdmin(oidc, metrics);
@@ -109,27 +116,29 @@ public final class Fdrop implements AutoCloseable {
         this.twoFactor = new TwoFactorService(config.auth.twoFactor,
                 TwoFactorService.keycloak(keycloak, config.auth.oidc));
         this.resolver = new PathResolver(folders);
-        this.recorder = new UploadRecorder(db, records, folders, metrics);
-        this.expiry = new ExpiryService(config, expiryRepo, records, resolver, storage, metrics, clock);
+        this.recorder = new UploadRecorder(db, records, folders, metrics, searchRepo);
+        this.expiry = new ExpiryService(config, expiryRepo, records, resolver, storage, metrics, clock, searchRepo);
         this.expirySweeper = new ExpirySweeper(config, db, expiryRepo, records, users, folders, storage, expiry,
-                metrics, clock);
+                metrics, clock, searchRepo);
         this.files = new FileService(config, storage, resolver, users, folders, destinations, uploads, records,
-                recorder, expiry);
+                recorder, expiry, searchRepo);
         this.uploadService = new UploadService(config, storage, files, uploads, users, recorder, records, metrics);
-        this.folderService = new FolderService(db, folders, destinations, users, records, storage, resolver, expiry);
+        this.folderService = new FolderService(db, folders, destinations, users, records, storage, resolver, expiry,
+                searchRepo);
         this.hostPolicy = new HostPolicy(config.forward.allowedHosts);
         this.destinationService = new DestinationService(destinations, folders, users, records, ssh,
                 SecretBox.fromBase64(config.forward.encryptionKey), hostPolicy);
         this.userAdmin = new UserAdminService(config, keycloak, userStatus, twoFactor, users, folders, destinations,
-                uploads, records, storage, folderService, appAccountRepo);
+                uploads, records, storage, folderService, appAccountRepo, searchRepo);
         this.appAccounts = new AppAccountService(config, db, appAccountRepo, users, userAdmin, twoFactor, oidc,
                 new ClientCertificates(config.auth.applications.mtls), metrics,
                 AppAccountService.keycloak(keycloak, userStatus, config));
         this.accounts = new AccountService(config, users, uploads, records, folders, destinations, resolver, ssh);
         this.encryptionService = new EncryptionService(config, encryption, new EncryptionRepo(db), metrics);
         this.janitor = new Janitor(config, db, uploads, uploadService, records, folders, destinations, users, storage,
-                metrics, appAccounts);
+                metrics, appAccounts, searchRepo);
         records.resetStuckSending(Long.MAX_VALUE);
+        this.search = loadSearch();
     }
 
     /** The backend, timed, wrapped in encryption at rest; with encryption on, a broken KEK stops startup. */
@@ -152,8 +161,20 @@ public final class Fdrop implements AutoCloseable {
         }
     }
 
+    /** The Lucene search from fdrop-search when it is on the classpath and turned on; otherwise none. */
+    private SearchService loadSearch() {
+        if (!config.search.enabled) {
+            return new NoSearch();
+        }
+        for (SearchServiceFactory f : java.util.ServiceLoader.load(SearchServiceFactory.class)) {
+            return f.create(this);
+        }
+        return new NoSearch();
+    }
+
     @Override
     public void close() throws Exception {
+        search.close();
         expirySweeper.close();
         encryptionService.close();
         janitor.close();

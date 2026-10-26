@@ -1,6 +1,6 @@
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import { signOut } from "../api/client";
 import { useMe } from "../auth/useMe";
 import { setTheme, useTheme } from "../theme/theme";
@@ -17,13 +17,13 @@ import {
   MenuIcon,
   MoonIcon,
   PlusIcon,
-  SearchIcon,
   ServerIcon,
   SettingsIcon,
   SunIcon,
   UploadIcon,
   UserIcon,
 } from "./icons";
+import { SearchBox } from "./SearchBox";
 import { UploadQueuePanel } from "./UploadQueuePanel";
 import { Logo } from "./ui";
 import s from "./Layout.module.css";
@@ -46,6 +46,7 @@ const NAV: NavItem[] = [
   { to: "/admin/applications", label: "Applications", icon: <AppIcon />, admin: true },
   { to: "/admin/destinations", label: "Destinations", icon: <ServerIcon />, admin: true },
   { to: "/admin/encryption", label: "Encryption", icon: <LockIcon />, admin: true },
+  { to: "/admin/search", label: "Search index", icon: <ListIcon />, admin: true },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -240,46 +241,5 @@ function SidebarActions() {
         <PlusIcon size={18} />
       </button>
     </div>
-  );
-}
-
-/** Filters the folder being shown by name; from other pages it searches Home. */
-function SearchBox() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const inFiles = location.pathname.startsWith("/files/");
-  const [value, setValue] = useState(inFiles ? (params.get("q") ?? "") : "");
-  useEffect(() => setValue(inFiles ? (params.get("q") ?? "") : ""), [inFiles, params, location.pathname]);
-
-  const apply = (q: string) => {
-    const base = inFiles ? location.pathname : "/files/home";
-    navigate(q.trim() ? `${base}?q=${encodeURIComponent(q.trim())}` : base, { replace: inFiles });
-  };
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    apply(value);
-  };
-  return (
-    <form role="search" className={s.search} onSubmit={submit}>
-      <label htmlFor="file-search" className="visually-hidden">
-        Search files in this folder
-      </label>
-      <span className={s.searchIcon}>
-        <SearchIcon size={16} />
-      </span>
-      <input
-        id="file-search"
-        type="search"
-        placeholder={inFiles ? "Search this folder" : "Search Home"}
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          if (inFiles) {
-            apply(e.target.value);
-          }
-        }}
-      />
-    </form>
   );
 }

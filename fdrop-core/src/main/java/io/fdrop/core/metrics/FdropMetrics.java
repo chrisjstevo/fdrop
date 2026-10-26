@@ -66,7 +66,13 @@ public final class FdropMetrics {
             Map.entry("fdrop_encryption_kek_seconds", Set.of("provider", "operation", "outcome")),
             Map.entry("fdrop_encryption_dek_cache_total", Set.of("result")),
             Map.entry("fdrop_encryption_objects", Set.of("key_id")),
-            Map.entry("fdrop_encryption_reencrypt_objects", Set.of("state")));
+            Map.entry("fdrop_encryption_reencrypt_objects", Set.of("state")),
+            Map.entry("fdrop_search_queries_total", Set.of("outcome")),
+            Map.entry("fdrop_search_query_seconds", Set.of()),
+            Map.entry("fdrop_search_documents", Set.of()),
+            Map.entry("fdrop_search_index_lag_seconds", Set.of()),
+            Map.entry("fdrop_search_extract_total", Set.of("result")),
+            Map.entry("fdrop_search_extract_seconds", Set.of()));
 
     private final PrometheusMeterRegistry registry;
     private final Duration[] buckets;
@@ -75,6 +81,9 @@ public final class FdropMetrics {
     private final AtomicLong storageUsed = new AtomicLong();
     private final AtomicLong expiryFiles = new AtomicLong();
     private final AtomicLong expiryOverdue = new AtomicLong();
+    private final AtomicLong searchDocuments = new AtomicLong();
+    private final java.util.concurrent.atomic.AtomicReference<Double> searchLag =
+            new java.util.concurrent.atomic.AtomicReference<>(0.0);
     private final MultiGauge users;
     private final MultiGauge appCredentialsExpiring;
     private final MultiGauge folders;
@@ -104,6 +113,9 @@ public final class FdropMetrics {
         Gauge.builder("fdrop.sftp.sessions.active", sftpSessions, AtomicLong::get).register(registry);
         Gauge.builder("fdrop.storage.used", storageUsed, AtomicLong::get).baseUnit("bytes").register(registry);
         Gauge.builder("fdrop.expiry.files", expiryFiles, AtomicLong::get).register(registry);
+        Gauge.builder("fdrop.search.documents", searchDocuments, AtomicLong::get).register(registry);
+        Gauge.builder("fdrop.search.index.lag", searchLag, java.util.concurrent.atomic.AtomicReference::get)
+                .baseUnit("seconds").register(registry);
         Gauge.builder("fdrop.expiry.overdue.files", expiryOverdue, AtomicLong::get).register(registry);
         users = MultiGauge.builder("fdrop.users").register(registry);
         appCredentialsExpiring = MultiGauge.builder("fdrop.app.credentials.expiring").register(registry);
@@ -286,6 +298,27 @@ public final class FdropMetrics {
         List<MultiGauge.Row<?>> rows = new ArrayList<>();
         byState.forEach((k, v) -> rows.add(MultiGauge.Row.of(Tags.of("state", k), v)));
         reencryptObjects.register(rows, true);
+    }
+
+    /** A search: {@code ok}, {@code invalid}, {@code rate_limited} or {@code error}. */
+    public void searchQuery(String outcome, long nanos) {
+        Counter.builder("fdrop.search.queries").tags("outcome", outcome).register(registry).increment();
+        if (nanos > 0) {
+            timer("fdrop.search.query").record(nanos, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    public void searchIndex(long documents, double lagSeconds) {
+        searchDocuments.set(documents);
+        searchLag.set(lagSeconds);
+    }
+
+    /** One text extraction and its result (ok, unsupported, too_large, protected, timeout, failed). */
+    public void searchExtract(String result, long nanos) {
+        Counter.builder("fdrop.search.extract").tags("result", result).register(registry).increment();
+        if (nanos > 0) {
+            timer("fdrop.search.extract").record(nanos, TimeUnit.NANOSECONDS);
+        }
     }
 
     /** Snapshot values refreshed in the background from the metadata DB. */

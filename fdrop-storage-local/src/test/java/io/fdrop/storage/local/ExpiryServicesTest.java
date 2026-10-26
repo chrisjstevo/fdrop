@@ -343,7 +343,7 @@ class ExpiryServicesTest {
         }
         clock.advance(Duration.ofSeconds(2));
         ExpirySweeper other = new ExpirySweeper(app.config, app.db, app.expiryRepo, app.records, app.users,
-                app.folders, app.storage, app.expiry, app.metrics, clock);
+                app.folders, app.storage, app.expiry, app.metrics, clock, app.searchRepo);
         try {
             var a = Thread.ofVirtual().start(() -> app.expirySweeper.sweep());
             int b = other.sweep();

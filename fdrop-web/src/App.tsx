@@ -9,6 +9,8 @@ import { AccountPage } from "./pages/AccountPage";
 import { AdminApplicationPage, AdminApplicationsPage } from "./pages/AdminApplicationsPage";
 import { AdminDestinationPage, AdminDestinationsPage } from "./pages/AdminDestinationsPage";
 import { AdminEncryptionPage } from "./pages/AdminEncryptionPage";
+import { AdminSearchPage } from "./pages/AdminSearchPage";
+import { SearchPage } from "./pages/SearchPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { FilesPage } from "./pages/FilesPage";
 import { FolderDetailPage, FoldersPage } from "./pages/FoldersPage";
@@ -121,6 +123,8 @@ function SignedIn() {
             <Route path="/admin/destinations" element={<Admin><AdminDestinationsPage /></Admin>} />
             <Route path="/admin/destinations/:id" element={<Admin><AdminDestinationPage /></Admin>} />
             <Route path="/admin/encryption" element={<Admin><AdminEncryptionPage /></Admin>} />
+            <Route path="/admin/search" element={<Admin><AdminSearchPage /></Admin>} />
+            <Route path="/search" element={<Standard><SearchPage /></Standard>} />
             <Route path="*" element={<Empty title="Page not found" />} />
           </Routes>
         </Layout>

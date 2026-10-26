@@ -11,6 +11,7 @@ import io.fdrop.core.db.AppAccountRepo;
 import io.fdrop.core.db.DestinationRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
@@ -63,10 +64,14 @@ public final class UserAdminService {
     private final AppAccountRepo appAccounts;
     private final List<SessionTerminator> terminators = new CopyOnWriteArrayList<>();
 
+    private final SearchRepo search;
+
     public UserAdminService(FdropConfig cfg, KeycloakAdmin keycloak, UserStatusCache status,
                             TwoFactorService twoFactor, UserRepo users, FolderRepo folders,
                             DestinationRepo destinations, UploadRepo uploads, RecordRepo records,
-                            StorageBackend storage, FolderService folderService, AppAccountRepo appAccounts) {
+                            StorageBackend storage, FolderService folderService, AppAccountRepo appAccounts,
+                            SearchRepo search) {
+        this.search = search;
         this.cfg = cfg;
         this.keycloak = keycloak;
         this.status = status;
@@ -190,6 +195,7 @@ public final class UserAdminService {
         records.deleteForUser(id);
         try {
             storage.delete(PathResolver.homeKey(id));
+            search.append(SearchRepo.Op.DELETE, PathResolver.homeKey(id).toString(), null);
         } catch (IOException e) {
             log.warn("could not delete home of {}: {}", username, e.toString());
         }

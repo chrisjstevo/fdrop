@@ -6,6 +6,7 @@ import io.fdrop.core.config.FdropConfig;
 import io.fdrop.core.db.DestinationRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
@@ -76,10 +77,12 @@ public final class FileService {
     private final RecordRepo records;
     private final UploadRecorder recorder;
     private final ExpiryService expiry;
+    private final SearchRepo search;
 
     public FileService(FdropConfig cfg, StorageBackend storage, PathResolver resolver, UserRepo users,
                        FolderRepo folders, DestinationRepo destinations, UploadRepo uploads, RecordRepo records,
-                       UploadRecorder recorder, ExpiryService expiry) {
+                       UploadRecorder recorder, ExpiryService expiry, SearchRepo search) {
+        this.search = search;
         this.cfg = cfg;
         this.storage = storage;
         this.resolver = resolver;
@@ -478,6 +481,7 @@ public final class FileService {
                 storage.mkdirs(vp.key().parent());
             }
             storage.mkdirs(vp.key());
+            search.append(SearchRepo.Op.INDEX, vp.key().toString(), null);
             return new Entry(vp.name(), vp.virtual(), EntryType.DIR, 0, Instant.now().toEpochMilli(), true, null);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -511,6 +515,7 @@ public final class FileService {
             users.addUsage(vp.quotaOwner(), -bytes);
             records.markDeleted(vp.key().toString());
             expiry.onDeleted(vp.key());
+            search.append(SearchRepo.Op.DELETE, vp.key().toString(), null);
             Audit.log("delete", "user", p.username(), "path", vp.virtual(), "bytes", bytes);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -565,6 +570,7 @@ public final class FileService {
             }
             records.markMoved(src.key().toString(), dst.key().toString(), src.virtual(), dst.virtual());
             boolean shortened = expiry.onMoved(p, src, dst);
+            search.append(SearchRepo.Op.MOVE, src.key().toString(), dst.key().toString());
             Audit.log("move", "user", p.username(), "from", src.virtual(), "to", dst.virtual(),
                     "expiryShortened", shortened);
             ObjectInfo moved = storage.stat(dst.key()).orElse(o);

@@ -6,6 +6,7 @@ import io.fdrop.core.db.Db;
 import io.fdrop.core.db.DestinationRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.metrics.FdropMetrics;
@@ -50,12 +51,14 @@ public final class Janitor implements AutoCloseable {
     private final StorageBackend storage;
     private final FdropMetrics metrics;
     private final AppAccountService appAccounts;
+    private final SearchRepo search;
     private final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().name("janitor").daemon().factory());
 
     public Janitor(FdropConfig cfg, Db db, UploadRepo uploads, UploadService uploadService, RecordRepo records,
                    FolderRepo folders, DestinationRepo destinations, UserRepo users, StorageBackend storage,
-                   FdropMetrics metrics, AppAccountService appAccounts) {
+                   FdropMetrics metrics, AppAccountService appAccounts, SearchRepo search) {
+        this.search = search;
         this.cfg = cfg;
         this.db = db;
         this.uploads = uploads;
@@ -111,6 +114,7 @@ public final class Janitor implements AutoCloseable {
         for (UploadSession s : uploads.finishedBefore(now - Duration.ofDays(7).toMillis())) {
             uploads.delete(s.id());
         }
+        search.prune(now - Durations.parse(cfg.search.feedRetention).toMillis());
         int pruned = records.deleteOlderThan(now - Durations.parse(cfg.upload.historyRetention).toMillis());
         if (pruned > 0) {
             log.info("pruned {} My uploads rows past retention", pruned);
@@ -125,6 +129,7 @@ public final class Janitor implements AutoCloseable {
             if (o.isPresent()) {
                 storage.delete(key);
                 users.addUsage(f.ownerSub(), -o.get().size());
+                search.append(SearchRepo.Op.DELETE, key.toString(), null);
             }
         } catch (Exception e) {
             log.warn("could not delete forwarded file {}: {}", j.storageKey(), e.toString());

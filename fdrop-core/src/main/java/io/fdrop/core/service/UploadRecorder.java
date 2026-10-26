@@ -5,6 +5,7 @@ import io.fdrop.core.auth.Principal;
 import io.fdrop.core.db.Db;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.metrics.FdropMetrics;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.RecordStatus;
@@ -35,7 +36,10 @@ public final class UploadRecorder {
     private final FdropMetrics metrics;
     private volatile JobListener listener = () -> { };
 
-    public UploadRecorder(Db db, RecordRepo records, FolderRepo folders, FdropMetrics metrics) {
+    private final SearchRepo search;
+
+    public UploadRecorder(Db db, RecordRepo records, FolderRepo folders, FdropMetrics metrics, SearchRepo search) {
+        this.search = search;
         this.db = db;
         this.records = records;
         this.folders = folders;
@@ -56,6 +60,7 @@ public final class UploadRecorder {
                 startIp == null ? clientIp : startIp, now, null);
         boolean queued = db.inTransaction(() -> {
             records.insert(rec);
+            search.append(SearchRepo.Op.INDEX, info.path().toString(), null);
             if (wentTo == WentTo.FORWARD) {
                 FolderForward ff = folders.forward(vp.folder().id())
                         .orElseThrow(() -> new IllegalStateException("forward folder without settings"));

@@ -202,7 +202,8 @@ public final class StreamFormat {
         return hkdf(ikm, info.getBytes(StandardCharsets.US_ASCII));
     }
 
-    static byte[] hkdf(byte[] ikm, byte[] info) {
+    /** HKDF-SHA-256 (RFC 5869) with an empty salt, 32 bytes out. */
+    public static byte[] hkdf(byte[] ikm, byte[] info) {
         byte[] prk = hmac(new byte[32], ikm, ikm.length);
         byte[] t = hmac(prk, concat(info, new byte[]{1}), info.length + 1);
         return Arrays.copyOf(t, 32);

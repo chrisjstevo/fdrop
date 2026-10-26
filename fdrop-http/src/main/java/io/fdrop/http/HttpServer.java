@@ -7,6 +7,7 @@ import io.fdrop.http.api.AccountApi;
 import io.fdrop.http.api.AdminApi;
 import io.fdrop.http.api.FilesApi;
 import io.fdrop.http.api.FoldersApi;
+import io.fdrop.http.api.SearchApi;
 import io.micrometer.core.instrument.binder.netty4.NettyAllocatorMetrics;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.PooledByteBufAllocator;
@@ -79,6 +80,7 @@ public final class HttpServer implements AutoCloseable {
         new FilesApi(app).register(router);
         new FoldersApi(app).register(router);
         new AdminApi(app).register(router);
+        new SearchApi(app).register(router);
         app.userAdmin.addTerminator(sub -> sessions.removeWhere(sub, null));
     }
 

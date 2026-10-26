@@ -4,7 +4,7 @@ Oct 22, 2026 · Living version: [fdrop — Technical Specification](https://clau
 
 ## Overview
 
-fdrop is a single JVM service that lets users upload and download files through a browser (HTTP) or an SFTP client, with every file stored in a pluggable backend: the local file system or Amazon S3 (and S3-compatible stores). Browser uploads are split into chunks so a dropped connection resumes from the last acknowledged chunk instead of restarting. Any file can be given an expiry (`6 days`, `2weeks`), after which fdrop deletes it. Users keep private files, collaborate in shared folders, and drop files into forward folders that fdrop relays to another SFTP server; admins create and delete users, create application accounts that let other systems exchange files over mTLS or a password (with `fdrop`, a Java command line client, for unattended uploads), and define the forwarding destinations each user may use.
+fdrop is a single JVM service that lets users upload and download files through a browser (HTTP) or an SFTP client, with every file stored in a pluggable backend: the local file system or Amazon S3 (and S3-compatible stores). Browser uploads are split into chunks so a dropped connection resumes from the last acknowledged chunk instead of restarting. Any file can be given an expiry (`6 days`, `2weeks`), after which fdrop deletes it, and users can search the names and contents of every file they can see. Users keep private files, collaborate in shared folders, and drop files into forward folders that fdrop relays to another SFTP server; admins create and delete users, create application accounts that let other systems exchange files over mTLS or a password (with `fdrop`, a Java command line client, for unattended uploads), and define the forwarding destinations each user may use.
 
 ### Goals
 
@@ -14,6 +14,7 @@ fdrop is a single JVM service that lets users upload and download files through 
 - SFTP access via Apache MINA SSHD; HTTP via Netty, with streaming I/O and bounded memory regardless of file size.
 - Per-user isolation: each user sees only their own files plus the shared and forward folders they belong to.
 - Every stored file encrypted at rest with streaming, per-file envelope encryption, on both backends.
+- Full-text search over names and contents with Lucene, never returning anything from a file the user cannot open.
 
 ### Non-goals (v1)
 
@@ -75,6 +76,7 @@ Browser uploads go through the upload handlers, which track chunk sessions in th
 
 - **Threading:** Netty event loops and MINA NIO threads only parse protocol frames. All storage calls run on a virtual-thread executor, and results are handed back to the channel, so a slow S3 call never blocks a network thread.
 - **Backpressure:** HTTP uploads pause `autoRead` while a write is pending; SFTP relies on MINA's window size (default 2 MiB) so a client cannot outrun the backend.
+- **Search:** an embedded Lucene index on each node, fed from a change feed in the metadata DB, with text extracted once per file by Tika in a separate short-lived JVM (see Search). It lives in the `fdrop-search` module behind a `SearchService` interface in `fdrop-core`, so a build without it simply has no search.
 - **Encryption:** the backend is always wrapped in `EncryptingStorage`, so every byte written through the Storage SPI is encrypted and every byte read is decrypted and authenticated, whichever front end or worker made the call (see Encryption at rest).
 - **Lifecycle:** `fdrop-server` main loads config, runs DB migrations, initialises the chosen backend and its encryption keys, starts HTTP and SFTP, and on SIGTERM stops accepting connections, waits up to 30 s for in-flight transfers, then closes.
 
@@ -132,7 +134,7 @@ S3 requires every part except the last to be at least 5 MiB, so the chunk size f
 
 Every file fdrop stores is encrypted before its bytes reach the backend, and decrypted as it is read back. Encryption is a streaming layer, `EncryptingStorage`, that wraps whichever `StorageBackend` is configured, the way `InstrumentedStorage` does, so the local file system and S3 are covered alike and neither the protocol front ends nor the backends change. Nothing above the layer sees ciphertext; nothing below it sees plaintext.
 
-- **What is covered:** stored files, resumable upload parts (local `.fdrop-parts/` files and S3 parts), the local backend's `.fdrop-tmp/` write files, and SFTP spool files under `sftp.spoolDir`. Folder markers (`dir/` objects on S3, real directories locally) carry no content and are not encrypted.
+- **What is covered:** stored files, resumable upload parts (local `.fdrop-parts/` files and S3 parts), the local backend's `.fdrop-tmp/` write files, SFTP spool files under `sftp.spoolDir`, the text extracted for search (`system/search-text/`) and, through `EncryptedDirectory`, each node's search index (see Search). Folder markers (`dir/` objects on S3, real directories locally) carry no content and are not encrypted.
 - **What is not hidden:** storage keys are paths (`users/<sub>/docs/report.pdf`), so folder and file names, the number of files and their approximate sizes stay visible to anyone who can list the storage. Hiding names is an open question.
 - **Streaming throughout:** a file is cut into fixed-size segments (64 KiB), and each is encrypted and authenticated on its own. Uploads encrypt as bytes arrive and downloads decrypt as they leave, so memory per transfer stays at about one segment, a multi-GB file is never buffered, and a ranged read decrypts only the segments it touches.
 - **Default on:** `storage.encryption.enabled` is `true` for new installations; fdrop refuses to start with it on and no usable key-encryption key. Turning it off later stops encrypting new files but still decrypts existing ones.
@@ -264,6 +266,9 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8080; 8443 with TLS)
 | GET/PATCH | `/api/v1/me` | Current user: username, roles, quota, usage, two-factor status, home default expiry; `PATCH` changes the home default expiry |
 | DELETE | `/api/v1/me/two-factor/{credentialId}` | Remove one of the user's own second factors (needs a two-factor session; the last required factor cannot be removed) |
 | GET/POST/DELETE | `/api/v1/me/ssh-keys` | Manage the user's SFTP public keys |
+| GET | `/api/v1/search?q=&scope=&path=&type=&modifiedFrom=&sort=&cursor=&limit=` | Search names and contents of every file the caller can see (see Search) |
+| GET | `/api/v1/search/suggest?q=` | Up to 8 name matches for the search box drop-down |
+| GET/POST | `/api/v1/admin/search`, `/api/v1/admin/search/rebuild` | This node's search index status; rebuild it (admin) |
 | GET | `/api/v1/me/uploads?wentTo=&q=&from=&to=&sort=&cursor=` | The My uploads list: the user's own upload records, filtered, sorted and paged, with count and total size for the filter |
 | GET | `/api/v1/files?path=/home/docs` | List a directory in the virtual tree (name, size, mtime, type, `expiresAt`, `expirySource`), with the folder's default and maximum expiry |
 | GET | `/api/v1/files/content?path=…` | Download; supports `Range`, `If-None-Match`, `Content-Disposition: attachment` |
@@ -304,7 +309,7 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8080; 8443 with TLS)
 | POST/DELETE | `/api/v1/admin/storage/encryption/reencrypt` | Start a re-encryption job (`fromKeyId`, or `plaintext: true`), or cancel the running one (admin) |
 | GET | `/healthz`, `/readyz`, `/metrics` | Not on this port: served on the management port (8081); see Observability |
 
-Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`); expiry problems (`invalid-expiry`, `expiry-too-long`, `expiry-not-allowed`, `conflicting-expiry`, `reserved-name`) are listed under File expiry. Downloads use `DefaultFileRegion` (zero-copy) only for unencrypted files on the local backend without TLS, and `ChunkedNioStream` over the backend channel otherwise, which with encryption at rest is every file; `Range` requests return 206 with one range (multi-range returns 200 with the full body).
+Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`); expiry problems (`invalid-expiry`, `expiry-too-long`, `expiry-not-allowed`, `conflicting-expiry`, `reserved-name`) are listed under File expiry. A search that is too long or too broad returns `invalid-search` (see Search). Downloads use `DefaultFileRegion` (zero-copy) only for unencrypted files on the local backend without TLS, and `ChunkedNioStream` over the backend channel otherwise, which with encryption at rest is every file; `Range` requests return 206 with one range (multi-range returns 200 with the full body).
 
 ### Browser UI
 
@@ -312,6 +317,7 @@ Errors use RFC 9457 problem JSON (`type`, `title`, `status`, `detail`); expiry p
 - Built with npm: `package.json` and a committed `package-lock.json` in `fdrop-web`; `npm ci` installs, `npm run build` produces the bundle with Vite, `npm test` runs Vitest. The output is bundled into the jar as static resources; no server-side rendering.
 - Libraries: React Router for navigation, TanStack Query for API calls and caching; no global state library unless a need appears.
 - File browser: breadcrumb, list view, a drop zone for drag-and-drop upload (below), a file picker button, download, rename, delete, new folder, and each file's expiry with a Set expiry action (see File expiry).
+- Search: the top bar's search box suggests matching names as you type and opens a results page of name and content matches on Enter (see Search).
 - Upload queue panel showing each file's percentage, bytes sent, speed and time remaining, with pause/resume/cancel and a retry state when offline (below).
 - Uploads run in a Web Worker using `Blob.slice()` and `XMLHttpRequest` (which, unlike `fetch`, reports upload progress events), up to 3 chunks in parallel per file; React components subscribe to worker progress through a small hook (`useUploadQueue`).
 - In-progress uploads are recorded in IndexedDB (upload id, file name, size, `lastModified`, chunk size) so a reload offers to resume once the user re-selects the same file.
@@ -377,7 +383,7 @@ The UI is one responsive web app that works on phones, tablets and desktops from
 | --- | --- |
 | Under 640 px (phone) | Single column; navigation in a menu button; files as list rows (name, size, date) with actions in an overflow menu; upload queue as a bottom sheet |
 | 640–1024 px (tablet) | Navigation as a collapsible drawer; files as a compact table; dialogs as side panels |
-| Over 1024 px (desktop) | Workspace layout: a light fixed sidebar (logo, Upload and New folder, Home, Shared, Forward, My uploads, Manage folders, an Admin group, storage meter) beside a white top bar with folder search and the account menu; full file table with sortable columns; upload queue as a docked panel |
+| Over 1024 px (desktop) | Workspace layout: a light fixed sidebar (logo, Upload and New folder, Home, Shared, Forward, My uploads, Manage folders, an Admin group, storage meter) beside a white top bar with the search box and the account menu; full file table with sortable columns; upload queue as a docked panel |
 
 - Mobile-first CSS with breakpoints at 640 px and 1024 px, and container queries for components such as the file table and upload queue; usable down to 320 px wide with no horizontal page scrolling.
 - Styling with CSS Modules and CSS custom properties for theme tokens (light and dark follow the system setting until the user picks one with the switch in the top bar; see Visual design); Radix UI primitives for accessible menus, dialogs and drop-downs, including the forward destination drop-down.
@@ -431,7 +437,7 @@ All values live as CSS custom properties in `fdrop-web/src/theme/tokens.css`; co
 **Components**
 
 - **Buttons:** pill shape (24 px radius), 12 px × 32 px padding (shortened to 10 px × 20 px on phones). Primary: deep navy fill, white text. Secondary: transparent, 1 px `#C0CDD8` border, navy text. On dark backgrounds, the secondary button uses a white border and white text.
-- **Workspace layout (after Dropbox and Box):** a light sidebar (`--color-sidebar`) with the logo (32 px) and name, a full-width deep navy Upload pill plus a round New folder button, line icons beside each navigation item, and a storage meter at the bottom. The active item is a tinted pill (`--color-selected`) with a small coral dot. The top bar is white with a pill-shaped search field (`--color-search`) that filters the folder being shown, and the account avatar. Under 1024 px the sidebar becomes a drawer behind a menu button.
+- **Workspace layout (after Dropbox and Box):** a light sidebar (`--color-sidebar`) with the logo (32 px) and name, a full-width deep navy Upload pill plus a round New folder button, line icons beside each navigation item, and a storage meter at the bottom. The active item is a tinted pill (`--color-selected`) with a small coral dot. The top bar is white with a pill-shaped search field (`--color-search`), which narrows the folder being shown as you type, suggests matching names from everywhere in a drop-down, and searches names and contents on Enter (see Search), and the account avatar. Under 1024 px the sidebar becomes a drawer behind a menu button.
 - **File list:** each file or folder has its icon (file, folder, forward arrow) on a 36 px rounded tile; rows are 56 px with a soft hover tint and no zebra stripes; headers are 13 px muted text. Home shows the last uploads as **Recent** cards (12 px radius) above **All files**. The breadcrumb sits above the bold folder title, with the Expires picker, New folder and Folder settings to its right.
 - **Inputs, drop-downs, cards, dialogs:** 4 px radius, 1 px `--color-border` border; raised panels and dialogs use LME's soft navy shadow (`0 20px 28px rgba(19, 66, 107, 0.2)`).
 - **Keyboard focus:** a 2 px coral outline, shown only when the user is tabbing, as on lme.com.
@@ -874,6 +880,166 @@ Metrics are listed under Observability: `fdrop_expiry_set_total`, `fdrop_expiry_
 - `sftp_pending_expiry(user_sub, storage_key, expires_in, created_at)`, primary key `(user_sub, storage_key)`.
 - `upload_record` gains `expires_at` and the status `EXPIRED` (above).
 
+## Search
+
+Users search the names and contents of every file they can see: their own Home and the shared folders they own or belong to. Search runs on [Apache Lucene](https://lucene.apache.org/) embedded in fdrop, with text taken out of documents by [Apache Tika](https://tika.apache.org/). It is started from the search box in the top bar. A user can never find, or learn anything from, a file they cannot open: access is checked inside every query and again on every result.
+
+### What is searched
+
+| Searched | Not searched (v1) |
+| --- | --- |
+| File and folder names, in Home and shared folders | Forward folders: their files pass through on their way to a partner (`search.includeForwardFolders` turns them on) |
+| The text of plain text, CSV, JSON, XML, Markdown, source code, HTML (text only), RTF, PDF, Word, Excel, PowerPoint, OpenDocument and email (`.eml`) files | Images and scanned PDFs (no OCR), audio and video, and the contents of archives (`.zip` is found by name only) |
+| The first `search.extract.maxTextPerFile` (1 MiB) of text per file, from files up to `search.extract.maxFileSize` (100 MiB) | Password-protected or encrypted documents, which are found by name and shown as "contents not searchable" |
+
+- **Name matches rank first** (field boosts: name ×3, folder path ×1.5, contents ×1), then by Lucene's BM25 relevance, with newer files ahead on ties.
+- **Text analysis:** contents use Lucene's `StandardAnalyzer` (Unicode word breaks, lower-casing, no stop words, so "to be" finds what it should). Names use an analyzer that also splits on `_`, `-`, `.`, digits and camelCase, so `nightly-2026-10-26.csv` is found by `nightly`, `2026` or `csv`, plus edge n-grams so the first letters of a name match while typing.
+
+### Query syntax
+
+The box takes plain words; every word must match, in the name or the contents. A small, safe syntax is offered and shown in a help tip under the results:
+
+| Type | Finds |
+| --- | --- |
+| `invoice acme` | Files with both words, in any order |
+| `"credit note"` | The exact phrase |
+| `invoice -draft` | Files with "invoice" but not "draft" |
+| `invoice \| receipt` | Either word |
+| `inv*` | Words starting with "inv" (prefixes only; at least 2 letters before the `*`) |
+| `name:report` | The word in the file name only (also `content:`) |
+| `type:pdf` | Only PDFs (also `doc`, `sheet`, `slides`, `text`, `email`, `other`) |
+
+- Queries are parsed with Lucene's `SimpleQueryParser`, never the classic query parser, so no input can build a regular-expression, fuzzy-everything or leading-wildcard query that scans the whole index. A query is at most 500 characters and 32 terms; a prefix expands to at most 1,024 terms. A query that breaks those limits gets `400` with problem type `invalid-search` and a plain-language reason.
+- Spelling suggestions ("did you mean") are not offered: Lucene builds them from words across the whole index, which would reveal words in other users' files.
+
+### Access control
+
+Access is enforced in three places, so a mistake in one cannot leak a file:
+
+1. **In the index.** Every document carries an `area` field: `home:<sub>` for files under a user's Home, `folder:<folderId>` for files in a managed folder. Each query is wrapped in a filter (`BooleanQuery` with a `FILTER` clause on a `TermInSetQuery`) listing only the areas the caller may read **right now**: their own Home plus the folders they own or are a member of, read from the metadata DB for every query, exactly as `PathResolver` does. Removing a member, deleting a folder or transferring ownership takes effect on the next search, with nothing to re-index.
+2. **On every result.** Each hit is resolved again as the caller through `FileService.stat` before it is returned; a hit that fails (a race with a move, a delete, an expired file) is dropped silently. Snippets and highlights are only ever built for hits that passed both checks.
+3. **No shared dictionaries.** Name suggestions while typing come from a filtered prefix query over the caller's areas, never from a global suggester or term dictionary, and result counts are counts of filtered hits. Nothing a user sees is computed from documents outside their areas.
+
+- Application accounts search on the same terms through the API. Admins get no extra reach: an admin finds only their own Home and their own folders.
+- Expired files are excluded by a filter on their `expiresAt` field at query time, from the expiry instant on, even before the sweeper deletes them.
+- Files in folders the caller can only read are found and can be downloaded, as in the file list.
+
+### Index and documents
+
+Each node keeps its own Lucene index on local disk (`search.indexDir`) and answers searches from it, so search needs no extra service, and adding a node adds search capacity. All nodes build the same index from the same change feed in the metadata DB.
+
+One Lucene document per file:
+
+| Field | Type | Use |
+| --- | --- | --- |
+| `id` | `StringField`, stored | The storage key; updates and deletes replace by it |
+| `area` | `StringField` | `home:<sub>` or `folder:<folderId>`: the access filter |
+| `relPath` | `TextField` (path analyzer) and stored | Path inside its area, e.g. `reports/q3/board.pdf`; the shown location is rebuilt from the folder's current name at query time, so renaming a shared folder re-indexes nothing |
+| `name` | `TextField` (name analyzer), stored, with term vectors | Name matching and highlighting |
+| `content` | `TextField` (standard analyzer), stored compressed, with offsets | Content matching and snippets |
+| `type` | `StringField` | Type family for `type:` and the filter chips |
+| `size`, `modified`, `expiresAt` | `LongPoint` with `NumericDocValues` | Filters, sorting, expiry |
+| `extractState` | `StringField`, stored | `ok`, `unsupported`, `too_large`, `protected`, `failed`: why contents may be missing |
+
+Folders get a lighter document (name and path only) so a search finds them too.
+
+**Change feed.** Whenever fdrop changes what a user could find, it appends a row to `search_change(seq, op, storage_key, to_key, at)` in the same transaction as the change itself:
+
+| Event | Change |
+| --- | --- |
+| Upload completed (any protocol), copy | `INDEX key` |
+| File or folder deleted, file expired, folder deleted, user deleted | `DELETE key` (a folder deletes everything under it) |
+| Move or rename | `MOVE key → to_key`: the document is rewritten from its stored fields under the new key and area, with no re-extraction |
+| Folder renamed, member added or removed, ownership transferred | Nothing: names are resolved and access is checked at query time |
+
+Each node's indexer reads the feed in `seq` order and records the last `seq` it applied in the Lucene commit's user data, so after a crash or restart it continues exactly where its last commit ended; the commit and the position move together. The indexer commits every `search.commitInterval` (5 s) when there are changes, and searches use a near-real-time reader refreshed every second, so an upload is normally searchable within a few seconds. Feed rows older than `search.feedRetention` (7 days) are pruned; a node that was down longer, or whose index is missing or corrupt, rebuilds from a full listing of the storage instead.
+
+**Text extraction** is the expensive part, so it happens once per file version, not once per node:
+
+- The first node to reach an `INDEX` change claims it in `search_extract(storage_key, etag, state, claimed_by, claimed_until)`, reads the file through the Storage SPI (so through decryption), and runs Tika.
+- The extracted text is stored once as an object under `system/search-text/<sha256 of key and etag>`, written through the encryption layer like any file and never reachable from a user's tree. Other nodes index from that object instead of extracting again, and a rebuild reuses it.
+- Extraction runs in a **separate, short-lived JVM** started by fdrop for each file (`ExtractMain`: the document on stdin, its text on stdout) with a 512 MiB heap (`search.extract.forkHeap`), a 60 s time limit (`search.extract.timeout`) and no network, because document parsers process untrusted files and have a history of crashes, runaway memory and vulnerabilities. A crash or timeout marks the file `failed`; its name is still indexed.
+- At most `search.extract.workers` (2) extractions run per node, at low priority, so search indexing never slows uploads or downloads. Extraction is skipped for files over `maxFileSize`, and the text is cut at `maxTextPerFile`.
+- The text objects are deleted with their file and do not count against anyone's quota.
+
+**Rebuild.** An admin can rebuild a node's index from the **Admin: Search index** screen (or by deleting `search.indexDir` and restarting): the node lists the storage, indexes every file from its cached text (extracting only what is missing), and keeps answering from the old index until the new one is complete, then swaps.
+
+**Encryption at rest.** The index holds words from users' files, so with `storage.encryption.enabled` it is encrypted too: the index directory is opened through `EncryptedDirectory`, a Lucene `FilterDirectory` that encrypts every index file with AES-256-CTR (CTR, because Lucene reads index files at random offsets) under a per-file key derived with HKDF from the node's index key. The index key is a data key wrapped by the storage KEK and kept in `search.indexDir/index.key`; rotating the KEK re-wraps it. A stolen disk or backup of a node therefore reveals neither file contents nor the words in them. Without storage encryption, keep `search.indexDir` on an encrypted volume.
+
+### Searching from the search box
+
+The search field in the top bar ("Search files and contents") starts every search:
+
+- **While typing** (from 2 characters, 150 ms after the last key), a drop-down shows up to 8 files and folders whose **names** match, each with its icon and location, from everywhere the user can see. Below them, a last item reads **Search contents for "…"**. Arrow keys move through the list, Enter opens the highlighted file's folder (with the file highlighted) or, on the last item, runs the full search; Escape closes the list. Inside a folder, the file list also keeps narrowing to matching names as before, so finding something in the folder in front of you is instant.
+- **Enter** (or the last item) opens the results page at `/search?q=…`, which searches names and contents everywhere the user can see.
+- The field has `role="combobox"` with an `aria-controls`'d `listbox`, and the result count is announced in a polite live region, so it works fully by keyboard and with screen readers. On phones the field sits under the top bar (as now) and the drop-down becomes a full-width sheet.
+
+**Results page.**
+
+- The query stays in the search box. Above the results: the count ("37 files"), scope chips **Everywhere** and **In <the folder you came from>**, type chips (**All**, **PDFs**, **Documents**, **Spreadsheets**, **Presentations**, **Text**, **Email**, **Other**), a **Modified** filter (any time, last 7 days, last 30 days, this year) and sort (**Best match** or **Newest**).
+- Each result is a row in the workspace style: its file icon on a tile, the name with matched words in bold, its location as a breadcrumb (`Shared: Invoices / 2026`), and up to two snippets of about 160 characters from the contents with the matched words marked, then size, modified date and expiry. Row actions: open the folder (the file highlighted), download, and set expiry where the user may write.
+- A file whose contents could not be read shows "Name match only" with the reason on hover (for example "Password-protected", "Too large to search").
+- 20 results per page, with "Load more" (a cursor, up to `search.maxResults`, 1,000). No results: suggestions to check spelling, use fewer words, or search everywhere instead of one folder.
+- Snippets are sent as plain text segments (`[{ "text": "…", "match": true }, …]`), never as HTML, and rendered by React as text with `<mark>`, so a document's text cannot inject markup.
+- Under the results, a muted note: "Files uploaded in the last few seconds may not appear yet."
+
+### API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/search?q=&scope=all\|folder&path=&type=&modifiedFrom=&sort=relevance\|newest&cursor=&limit=` | Search names and contents everywhere the caller can see, or under one folder (`scope=folder&path=/shared/Invoices`) |
+| GET | `/api/v1/search/suggest?q=` | Up to 8 name matches for the search box drop-down |
+| GET | `/api/v1/admin/search` | This node's index: documents, size, last applied change, lag, extraction counts by state (admin) |
+| POST | `/api/v1/admin/search/rebuild` | Rebuild this node's index in the background (admin) |
+
+Example:
+
+```http
+GET /api/v1/search?q=%22credit%20note%22%20acme&limit=2 HTTP/1.1
+Authorization: Bearer eyJhbGciOi…
+```
+
+```json
+{
+  "total": 3,
+  "nextCursor": "c2NvcmU6MTIuNHxpZDp…",
+  "results": [
+    {
+      "path": "/shared/Invoices/2026/credit-note-0412.pdf",
+      "name": [{ "text": "credit-note-0412.pdf", "match": false }],
+      "location": "Shared: Invoices / 2026",
+      "type": "pdf",
+      "size": 90112,
+      "modified": "2026-10-25T14:02:11Z",
+      "expiresAt": "2026-10-31T14:02:11Z",
+      "snippets": [[
+        { "text": "…issued to ", "match": false },
+        { "text": "Acme", "match": true },
+        { "text": " Ltd. This ", "match": false },
+        { "text": "credit note", "match": true },
+        { "text": " cancels invoice 2026-0391…", "match": false }
+      ]],
+      "contents": "ok"
+    }
+  ]
+}
+```
+
+- Searches count against a per-user rate limit (`search.rateLimitPerMinute`, 60); over it the API returns `429` with `Retry-After`.
+- A search for a folder the caller cannot see (`scope=folder&path=…`) returns `404`, like listing it would.
+
+### Audit and metrics
+
+- Audit: `search` entries record the user, scope, number of results and duration, but **not** the query text, which is the user's own content (set `search.auditQueries: true` to include it). `search.rebuild` records the acting admin. `search.extract.failed` records the storage key and reason.
+- Metrics: `fdrop_search_queries_total{outcome}` (ok, invalid, rate_limited, error), `fdrop_search_query_seconds`, `fdrop_search_documents`, `fdrop_search_index_lag_seconds` (age of the oldest change this node has not applied), `fdrop_search_extract_total{result}` (ok, unsupported, too_large, protected, timeout, failed) and `fdrop_search_extract_seconds`. Query text never appears in labels or logs.
+- Alerts: `FdropSearchIndexLag` (lag over 15 min for 15 min, warning) and `FdropSearchExtractFailing` (more than 20% of extractions `failed` or `timeout` over 1 h, warning).
+
+### Metadata
+
+- `search_change(seq BIGINT generated, op INDEX|DELETE|MOVE, storage_key, to_key, at)`, indexed on `seq`; pruned after `search.feedRetention`.
+- `search_extract(storage_key, etag, state PENDING|OK|UNSUPPORTED|TOO_LARGE|PROTECTED|FAILED, text_key, claimed_by, claimed_until, attempts, updated_at)`, primary key `(storage_key, etag)`.
+- On each node, outside the DB: the Lucene index in `search.indexDir`, its commit user data holding the last applied `seq`, and `index.key` (the wrapped index key).
+
 ## Authentication and authorisation
 
 One `AuthService` serves both protocols and delegates identity to Keycloak over OpenID Connect, so a user has the same identity, roles, home and quota over HTTP and SFTP. fdrop stores no passwords.
@@ -952,6 +1118,7 @@ fdrop has three roles: **standard** (`fdrop-user`) works with files and creates 
 | Create shared folders, manage their members | Yes (owner) | — | No |
 | Create forward folders from a drop-down of assigned destinations | Yes (owner) | — | No |
 | Set, change and clear file expiries where they can write | Yes | — | Yes |
+| Search names and contents of files they can open | Yes | — (no wider reach) | Yes, through the API |
 | Set own home default expiry; a shared folder's default and maximum expiry | Yes (home; folders they own) | — | No (admin sets its home default) |
 | Manage own SSH keys | Yes | — | No (admin manages them) |
 | Set up and remove own second factors | Yes | — | No |
@@ -1134,6 +1301,7 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 - Downloads always send `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` so uploaded HTML cannot execute in the app's origin.
 - Content-Security-Policy `default-src 'self'` on the UI.
 - Max file size `limits.maxFileSize` (default 100 GiB) enforced at upload create and on stream length.
+- Search never crosses access: every query is filtered to the caller's Home and folders, read from the DB per query, and every hit is checked again as the caller before it is returned; snippets are plain text; documents are parsed in a separate JVM with memory and time limits (see Search).
 - Encryption at rest: every stored file, upload part and spool file is encrypted with its own AES-256 key, wrapped by a key-encryption key held in an environment secret, AWS KMS or Vault, never in storage; segments are authenticated, so tampering or truncation fails the read instead of returning altered data (see Encryption at rest).
 - Audit log (JSON lines) of logins, uploads, downloads, deletes, moves and expiry (set, changed, cleared, refused, expired) with user, IP, protocol, path and bytes.
 - File expiry is a hard deadline: an expired file is refused on every protocol before its bytes are deleted. The `.fdrop-expires` suffix is reserved for SFTP control files and cannot be used as a file name.
@@ -1223,6 +1391,22 @@ storage:
     allowPlaintextReads: false   # true only while migrating a store that holds unencrypted files
     reencrypt:
       bytesPerSecond: 50MiB  # per node
+search:                      # see Search
+  enabled: true
+  indexDir: /var/lib/fdrop/search   # local disk on each node; encrypted with the storage KEK when encryption is on
+  includeForwardFolders: false
+  commitInterval: 5s
+  feedRetention: 7d          # older change rows are pruned; a node down longer rebuilds
+  maxResults: 1000
+  rateLimitPerMinute: 60     # per user
+  auditQueries: false        # true writes query text to the audit log
+  extract:
+    isolation: fork          # fork (a separate JVM per batch) | inprocess (tests only)
+    workers: 2               # per node
+    forkHeap: 512m
+    timeout: 60s
+    maxFileSize: 100MiB      # larger files are found by name only
+    maxTextPerFile: 1MiB
 upload:
   chunkSize: 8MiB
   ttl: 24h
@@ -1254,13 +1438,14 @@ limits:
 | Area | Choice |
 | --- | --- |
 | Language / runtime | Java 21 (virtual threads for the storage I/O executor) |
-| Build | Apache Maven 3.9 multi-module reactor: `fdrop-core` (SPI, auth, metadata), `fdrop-storage-local`, `fdrop-storage-s3`, `fdrop-http`, `fdrop-sftp`, `fdrop-web` (UI), `fdrop-server` (main), `fdrop-cli` (command line client) |
+| Build | Apache Maven 3.9 multi-module reactor: `fdrop-core` (SPI, auth, metadata), `fdrop-storage-local`, `fdrop-storage-s3`, `fdrop-http`, `fdrop-sftp`, `fdrop-web` (UI), `fdrop-search` (Lucene index and Tika extraction), `fdrop-server` (main), `fdrop-cli` (command line client) |
 | Web UI | React 19 + TypeScript responsive web app styled after lme.com, built with npm (Vite bundler, Vitest tests, CSS Modules, Radix UI, Nunito Sans) |
 | Identity | Keycloak 26 over OpenID Connect; Nimbus OAuth 2.0 SDK + `nimbus-jose-jwt` in fdrop |
 | HTTP | Netty 4.2 |
 | SFTP | Apache MINA SSHD 2.x |
 | S3 | AWS SDK for Java v2 (async, CRT client) |
 | Encryption at rest | JDK `javax.crypto` (AES-256-GCM, HKDF and HMAC-SHA-256); AWS SDK v2 KMS client; Vault transit over `java.net.http` |
+| Search | Apache Lucene 10 (core, analysis-common, queryparser) embedded; Apache Tika 3 (`tika-core` and the text, PDF, Microsoft, misc-office, HTML, mail and XML parser modules), run in a separate JVM for extraction |
 | Metadata | JDBC + Flyway migrations; H2 embedded or PostgreSQL |
 | Config | Jackson YAML + env overlay |
 | Command line client | Java 21, picocli, `java.net.http.HttpClient`, Jackson; shaded jar |
@@ -1271,7 +1456,7 @@ limits:
 
 Maven is the top-level build for the whole project; npm builds the React UI and is run by Maven, so one command still builds everything. `mvn verify` from the repo root must build every module, the UI and the fat jar, and run all tests.
 
-- Root `pom.xml` is the parent (`packaging=pom`) listing the eight modules and pinning versions in `<dependencyManagement>` via the Netty, AWS SDK v2 and Testcontainers BOMs.
+- Root `pom.xml` is the parent (`packaging=pom`) listing the nine modules and pinning versions in `<dependencyManagement>` via the Netty, AWS SDK v2 and Testcontainers BOMs.
 - Maven Wrapper (`mvnw`, `.mvn/wrapper/`) is committed so builds don't depend on a locally installed Maven.
 - `maven-enforcer-plugin` requires Java 21 and Maven 3.9+, and bans duplicate classes and dependency convergence errors.
 - `fdrop-web` uses `frontend-maven-plugin` to install pinned Node and npm versions, then run `npm ci`, `npm test` and `npm run build`; output lands in `target/classes/static` and is packaged as a jar the server depends on.
@@ -1565,6 +1750,12 @@ All fdrop metrics are prefixed `fdrop_`. Durations are histograms in seconds, si
 | `fdrop_encryption_dek_cache_total` | counter | `result` (hit, miss) | Data key cache lookups |
 | `fdrop_encryption_objects` | gauge | `key_id` | Stored objects per KEK id, from the daily inventory (`plaintext` for unencrypted ones) |
 | `fdrop_encryption_reencrypt_objects` | gauge | `state` (pending, done, failed) | Objects in the running re-encryption job |
+| `fdrop_search_queries_total` | counter | `outcome` (ok, invalid, rate_limited, error) | Searches |
+| `fdrop_search_query_seconds` | histogram | — | Search time, filtering and result checks included |
+| `fdrop_search_documents` | gauge | — | Documents in this node's index |
+| `fdrop_search_index_lag_seconds` | gauge | — | Age of the oldest change this node has not applied |
+| `fdrop_search_extract_total` | counter | `result` (ok, unsupported, too_large, protected, timeout, failed) | Text extractions |
+| `fdrop_search_extract_seconds` | histogram | — | Time to extract one file's text |
 
 Micrometer's standard JVM and process metrics (`jvm_memory_*`, `jvm_gc_*`, `jvm_threads_*`, `process_*`), Netty's pooled buffer memory, and the DB connection pool (`hikaricp_*`) are included too.
 
@@ -1600,6 +1791,8 @@ scrape_configs:
 | `FdropAppAuthFailures` | more than 20 application login failures in 5 min | warning |
 | `FdropAppCredentialExpiring` | any application password or certificate expiring within 7 days | warning |
 | `FdropUploadAssemblySlow` | 95th percentile assembly time over 5 min for 30 min | warning |
+| `FdropSearchIndexLag` | `fdrop_search_index_lag_seconds` over 15 min for 15 min | warning |
+| `FdropSearchExtractFailing` | `failed` and `timeout` above 20% of extractions over 1 h | warning |
 | `FdropDecryptionFailures` | any increase in `fdrop_encryption_failures_total`: stored data was altered or corrupted | critical |
 | `FdropKmsErrors` | KEK provider `outcome="error"` above 1% for 5 min | critical |
 | `FdropPlaintextObjects` | `fdrop_encryption_objects{key_id="plaintext"}` > 0 for 7 days after encryption was turned on | warning |
@@ -1622,6 +1815,7 @@ scrape_configs:
 - My uploads tests: uploads over the browser and SFTP both appear with the right size and Folder or Forward badge; forward status follows the job; rows survive move, delete and forwarding; users never see other users' rows; filters, totals and paging are correct; retention removes old rows; the recorded IP is the real client's behind a trusted proxy, both for HTTP (`X-Forwarded-For`) and SFTP (PROXY protocol), and a forged `X-Forwarded-For` from an untrusted address is ignored.
 - Metrics tests: `/metrics` is served only on the management port and returns valid Prometheus and OpenMetrics output; the bearer token is enforced when set; every documented metric appears with its labels; no label value contains a test username, file name, path or hostname; `/readyz` reports degraded when Keycloak is stopped and 503 when the DB is; `promtool check rules` passes on `deploy/prometheus/alerts.yml`.
 - File expiry tests: the syntax cases file passes in `fdrop-core`, Vitest and `fdrop-cli`, including calendar months and years (31 January, 29 February) and every error message; with a fake clock, a file uploaded over HTTP (resumable and simple), the CLI and SFTP gets the right expiry from the upload, the folder default, the home default or the folder maximum, counted from completion; values over a maximum and in forward folders are refused before any bytes are sent; conflicting header and field are refused; `PATCH` extends, shortens and clears within limits and is refused for read-only members; moves into a folder with a shorter maximum shorten the expiry; `applyToExisting` changes only files over the new maximum; an expired file is hidden from HTTP and SFTP listings and opens at its expiry instant and an open download is cut off; SFTP control files before and after the upload, with WinSCP-style temporary names, read back and `rm`, a pending value that lapses, a bad value failing the close with its message, and the reserved suffix refused over HTTP; forward folder files expire N days after `SENT` and never before; deletion on the local backend and on MinIO with `DeleteObjects`, a storage error retried, two sweeping nodes on one PostgreSQL deleting each file once, a node killed mid-batch whose claims are taken over, and a server stopped past many expiries deleting them all at start; audit entries and metrics as documented.
+- Search tests: names and contents found for every supported type (fixtures for PDF, DOCX, XLSX, PPTX, ODT, RTF, HTML, EML, CSV, JSON and code); a user never finds, nor gets suggestions, counts or snippets from, another user's Home or a folder they are not in, including with crafted queries (`area:`, field names, wildcards, phrases); removing a member hides that folder's files on the very next search; folder rename and file move are found under the new name without re-extraction; expired files disappear at their expiry instant; deleted files disappear; a document with HTML or script in its text comes back as plain segments; `SimpleQueryParser` limits refuse oversize queries with `invalid-search`; a crashing or hanging parser (fixture that loops, a zip bomb) is killed by the time limit and the file stays findable by name; two nodes each build the same index from the feed, extracting each file once; a node killed mid-batch resumes from its committed position; a rebuild keeps answering until it swaps; the index directory contains no plaintext word from the fixtures when encryption is on; rate limit returns `429`; Playwright: suggestions while typing, Enter opens results, keyboard navigation and screen reader announcements, at phone, tablet and desktop sizes.
 - Encryption tests: published-format test vectors (fixed DEK and nonces) decrypt to known plaintext, and fdrop's own output for them matches byte for byte; round trips for sizes 0, 1, `S − 1`, `S`, `S + 1` and many segments; every ranged read of a 3-segment file, including ranges inside, across and at the ends of segments; a changed byte in a segment, in a tag or in the header, swapped segments, a dropped final segment, data after the final segment and a header from another object each fail with the right reason and return no plaintext; resumable uploads with chunks sent out of order, in parallel, twice and from two nodes; SFTP resume; the storage contract suite run through `EncryptingStorage` on the local backend and on LocalStack S3, with server-side `CompleteMultipartUpload`; plaintext and ciphertext sizes agree with the formula; KEK rotation keeps old objects readable; the re-encryption job across two nodes, resumed after a kill, and the plaintext migration; KMS against LocalStack's KMS and Vault transit against a Vault Testcontainer; no DEK or KEK appears in logs, audit entries or API responses; load test with encryption on keeps heap below 512 MiB and reports throughput per core.
 - Resumable upload tests: kill the connection mid-chunk, restart the server between chunks, duplicate and out-of-order chunks, wrong hash, expiry.
 - SFTP integration tests with MINA's client and OpenSSH `sftp` in a container (put, get, reput, rename, large files).
@@ -1641,7 +1835,8 @@ scrape_configs:
 9. **M9 Command line client:** `fdrop-cli` module with `upload` and `whoami`, certificate loading, resumable uploads that survive drops and restarts, exit codes, shaded jar and release archive, and its unit, fake-server, integration and end-to-end tests.
 10. **M10 File expiry:** expiry syntax in `fdrop-core`, `fdrop-web` and `fdrop-cli` with shared test cases, expiry on HTTP, CLI and SFTP uploads (folder defaults, SFTP control files), change and clear, folder and home defaults and maximums, the sweeper with claims across nodes for both backends, UI columns and dialogs, audit, metrics and alerts.
 11. **M11 Encryption at rest:** `EncryptingStorage` with the `fdrop-stream-v1` format and test vectors, `local`, `aws-kms` and `vault` key providers, resumable and SFTP paths, header and DEK caches, key rotation and the re-encryption job, plaintext migration, admin screen, audit, metrics and alerts.
-12. **M12 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
+12. **M12 Search:** `fdrop-search` with the Lucene index per node, change feed and commit positions, Tika extraction in a forked JVM with shared text cache, access filtering and per-hit checks, `EncryptedDirectory`, the search box drop-down and results page, API, admin screen, rebuild, metrics and alerts.
+13. **M13 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
 
 ## Open questions
 
@@ -1652,6 +1847,8 @@ scrape_configs:
 - Should a forward folder ever forward to more than one destination, or pull files back from a remote server?
 - Should fdrop warn uploaders before their files expire (in the UI, or by an alert or email), and should the folder owner be able to see who set each expiry?
 - Should lowering a folder's maximum shorten existing files' expiries by default, rather than only when the owner ticks "Also shorten"?
+- Should search add OCR for images and scanned PDFs (Tesseract through Tika), and look inside archives?
+- Should search use a shared index service (OpenSearch) instead of an index per node once there are many nodes or a very large store?
 - Should storage keys (folder and file names) be hidden too, by storing objects under opaque ids and keeping names only in the metadata DB, at the cost of the storage no longer being readable on its own?
 - Should KEK rotation re-wrap DEKs only (a small header rewrite, or DEKs kept in the metadata DB) instead of re-encrypting whole objects?
 - Should password login for application accounts be allowed in production at all, or only mTLS and SSH keys, with passwords kept for dev and migration?

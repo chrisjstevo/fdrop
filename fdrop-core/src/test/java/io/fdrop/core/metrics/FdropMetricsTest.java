@@ -45,6 +45,9 @@ class FdropMetricsTest {
         m.dekCache(true);
         m.encryptionObjects(Map.of("k1", 3L));
         m.reencryptObjects(Map.of("pending", 2L));
+        m.searchQuery("ok", 1000);
+        m.searchIndex(10, 1.5);
+        m.searchExtract("ok", 1000);
         m.update(new FdropMetrics.Snapshot(Map.of("user", 3L, "application", 1L), 1000, Map.of("shared", 1L), Map.of("OPEN", 2L),
                 Map.of(List.of("QUEUED", "dst_1"), 1L)));
 
@@ -76,7 +79,9 @@ class FdropMetricsTest {
                 "fdrop_expiry_files", "fdrop_expiry_overdue_files", "fdrop_expiry_deleted_total",
                 "fdrop_expiry_delete_lag_seconds", "fdrop_encryption_bytes_total", "fdrop_encryption_failures_total",
                 "fdrop_encryption_plaintext_reads_total", "fdrop_encryption_kek_seconds",
-                "fdrop_encryption_dek_cache_total", "fdrop_encryption_objects", "fdrop_encryption_reencrypt_objects");
+                "fdrop_encryption_dek_cache_total", "fdrop_encryption_objects", "fdrop_encryption_reencrypt_objects",
+                "fdrop_search_queries_total", "fdrop_search_query_seconds", "fdrop_search_documents",
+                "fdrop_search_index_lag_seconds", "fdrop_search_extract_total", "fdrop_search_extract_seconds");
         assertThat(m.scrape("application/openmetrics-text")).contains("# EOF");
     }
 }

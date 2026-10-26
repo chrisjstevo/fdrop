@@ -331,3 +331,48 @@ export interface EncryptionStatus {
   };
   recentFailures: { storageKey: string; reason: string; at: string }[];
 }
+
+/** A run of text from search results; `match` marks the words that matched. Never HTML. */
+export interface Segment {
+  text: string;
+  match: boolean;
+}
+
+export interface SearchHit {
+  path: string;
+  name: Segment[];
+  /** "Home / reports" or "Shared: Invoices / 2026". */
+  location: string;
+  type: "pdf" | "doc" | "sheet" | "slides" | "text" | "email" | "other" | "folder";
+  folder: boolean;
+  size: number;
+  modified?: string;
+  expiresAt?: string;
+  snippets: Segment[][];
+  /** Whether the contents were searched: ok, or why not. */
+  contents: "ok" | "unsupported" | "too_large" | "protected" | "failed" | "pending";
+}
+
+export interface SearchResult {
+  total: number;
+  nextCursor?: string;
+  results: SearchHit[];
+}
+
+export interface SearchSuggestion {
+  path: string;
+  name: string;
+  location: string;
+  folder: boolean;
+}
+
+export interface SearchIndexStatus {
+  available: boolean;
+  documents: number;
+  sizeBytes: number;
+  appliedSeq: number;
+  latestSeq: number;
+  lagSeconds: number;
+  extract: Record<string, number>;
+  rebuilding: boolean;
+}

@@ -297,7 +297,7 @@ public final class DestinationService {
         }
     }
 
-    static void requireAdmin(Principal p) {
+    public static void requireAdmin(Principal p) {
         if (!p.admin() || p.mixedRoles()) {
             throw FdropException.forbidden("admin role required");
         }

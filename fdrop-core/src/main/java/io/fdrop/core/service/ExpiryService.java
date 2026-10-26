@@ -7,6 +7,7 @@ import io.fdrop.core.config.FdropConfig;
 import io.fdrop.core.db.ExpiryRepo;
 import io.fdrop.core.db.ExpiryRepo.Settings;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.error.FdropException;
 import io.fdrop.core.expiry.Expiry;
 import io.fdrop.core.metrics.FdropMetrics;
@@ -70,13 +71,16 @@ public final class ExpiryService {
     private final StorageBackend storage;
     private final FdropMetrics metrics;
     private final Clock clock;
+    /** Re-indexes a file whose expiry changed, so search filters it by its new expiry. */
+    private final SearchRepo search;
     private final Expiry serverMax;
     private final Expiry homeDefault;
     private final Expiry homeMax;
     private volatile Consumer<FileExpiry> scheduler = e -> { };
 
     public ExpiryService(FdropConfig cfg, ExpiryRepo repo, RecordRepo records, PathResolver resolver,
-                         StorageBackend storage, FdropMetrics metrics, Clock clock) {
+                         StorageBackend storage, FdropMetrics metrics, Clock clock, SearchRepo search) {
+        this.search = search;
         this.cfg = cfg.expiry;
         this.repo = repo;
         this.records = records;
@@ -332,6 +336,7 @@ public final class ExpiryService {
         Audit.log("file.expiry.set", "user", p.username(), "protocol", via, "path", vp.virtual(), "expiresAt", at,
                 "expiresIn", r.expiry().canonical(), "source", r.source(), "shortened", r.shortened());
         scheduler.accept(fe);
+        search.append(SearchRepo.Op.INDEX, fe.storageKey(), null);
         return View.of(fe);
     }
 
@@ -404,6 +409,7 @@ public final class ExpiryService {
         if (at == null) {
             repo.delete(key);
             rec.ifPresent(r -> records.setExpiresAt(r.id(), null));
+            search.append(SearchRepo.Op.INDEX, key, null);
             metrics.expirySet(protocol(via), "cleared");
             Audit.log("file.expiry.cleared", "user", p.username(), "protocol", via, "path", vp.virtual(),
                     "from", before.map(b -> Instant.ofEpochMilli(b.expiresAt())).orElse(null));
@@ -420,6 +426,7 @@ public final class ExpiryService {
                 "from", before.map(b -> Instant.ofEpochMilli(b.expiresAt())).orElse(null), "to", at,
                 "expiresIn", text, "reason", reason);
         scheduler.accept(fe);
+        search.append(SearchRepo.Op.INDEX, fe.storageKey(), null);
         return View.of(fe);
     }
 
@@ -504,6 +511,7 @@ public final class ExpiryService {
                 "from", before.map(b -> Instant.ofEpochMilli(b.expiresAt())).orElse(null),
                 "to", Instant.ofEpochMilli(at), "reason", reason);
         scheduler.accept(fe);
+        search.append(SearchRepo.Op.INDEX, fe.storageKey(), null);
     }
 
     // ---- folder and home settings ----
@@ -619,6 +627,7 @@ public final class ExpiryService {
         Audit.log("file.expiry.set", "user", "system", "storageKey", j.storageKey(), "folder", j.folderId(),
                 "expiresAt", Instant.ofEpochMilli(at), "expiresIn", keep.canonical(), "source", "FORWARD_KEEP");
         scheduler.accept(fe);
+        search.append(SearchRepo.Op.INDEX, fe.storageKey(), null);
     }
 
     // ---- SFTP control files ----

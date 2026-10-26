@@ -84,6 +84,24 @@ groups:
         annotations:
           summary: 95th percentile upload assembly time is over 5 minutes
 
+      - alert: FdropSearchIndexLag
+        expr: max(fdrop_search_index_lag_seconds{job="fdrop"}) > 900
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A node's search index is more than 15 minutes behind; new files are not searchable there
+
+      - alert: FdropSearchExtractFailing
+        expr: |
+          sum(increase(fdrop_search_extract_total{job="fdrop",result=~"failed|timeout"}[1h]))
+            / sum(increase(fdrop_search_extract_total{job="fdrop"}[1h])) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 20% of search text extractions fail or time out
+
       - alert: FdropDecryptionFailures
         expr: increase(fdrop_encryption_failures_total{job="fdrop"}[5m]) > 0
         labels:

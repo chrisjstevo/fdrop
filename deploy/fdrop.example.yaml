@@ -81,6 +81,22 @@ storage:
     allowPlaintextReads: false   # true only while migrating a store that holds unencrypted files
     reencrypt:
       bytesPerSecond: 50MiB  # per node
+search:                      # full-text search, see SPEC.md
+  enabled: true
+  indexDir: /var/lib/fdrop/search   # local disk on each node; encrypted with the storage KEK when encryption is on
+  includeForwardFolders: false
+  commitInterval: 5s
+  feedRetention: 7d          # older change rows are pruned; a node down longer rebuilds its index
+  maxResults: 1000
+  rateLimitPerMinute: 60     # per user
+  auditQueries: false        # true writes query text to the audit log
+  extract:
+    isolation: fork          # fork (a separate JVM per file) | inprocess (tests only)
+    workers: 2               # per node
+    forkHeap: 512m
+    timeout: 60s
+    maxFileSize: 100MiB      # larger files are found by name only
+    maxTextPerFile: 1MiB
 upload:
   chunkSize: 8MiB
   ttl: 24h

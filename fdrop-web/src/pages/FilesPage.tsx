@@ -76,6 +76,8 @@ export function FilesPage() {
   const path = raw.endsWith("/") && raw.length > 1 ? raw.slice(0, -1) : raw;
   const [params] = useSearchParams();
   const search = (params.get("q") ?? "").trim().toLowerCase();
+  // opened from a search result: that file is marked and scrolled to
+  const highlight = params.get("highlight");
   const client = useQueryClient();
   const listing = useQuery({
     queryKey: ["files", path],
@@ -126,6 +128,12 @@ export function FilesPage() {
     );
     return () => clearTimeout(t);
   }, [nextExpiry, client, path]);
+
+  useEffect(() => {
+    if (highlight && listing.data) {
+      document.getElementById("highlighted-row")?.scrollIntoView({ block: "center" });
+    }
+  }, [highlight, listing.data]);
 
   // The sidebar's Upload and New folder act on this folder when it can take them.
   const canUpload = !!self?.writable && !isAreaRoot;
@@ -217,7 +225,12 @@ export function FilesPage() {
           </thead>
           <tbody>
             {entries.map((e) => (
-              <tr key={e.path} className={e.type === "DIR" ? s.dropRow : undefined} {...dropPath(e)}>
+              <tr
+                key={e.path}
+                id={e.name === highlight ? "highlighted-row" : undefined}
+                className={[e.type === "DIR" ? s.dropRow : "", e.name === highlight ? s.highlighted : ""].join(" ")}
+                {...dropPath(e)}
+              >
                 <td>
                   <span className={s.nameCell}>
                     <EntryIcon e={e} />

@@ -22,6 +22,7 @@ public class FdropConfig {
     public Storage storage = new Storage();
     public Upload upload = new Upload();
     public FileExpiry expiry = new FileExpiry();
+    public Search search = new Search();
     public Db db = new Db();
     public Limits limits = new Limits();
 
@@ -219,6 +220,30 @@ public class FdropConfig {
         public int maxParallelChunks = 3;
         public String historyRetention = "365d";
         public DataSize clientHashMax = DataSize.ofGiB(2);
+    }
+
+    /** Full-text search (see "Search" in SPEC.md). Needs the fdrop-search module on the classpath. */
+    public static class Search {
+        public boolean enabled = true;
+        /** Local disk on each node; encrypted with the storage KEK when encryption at rest is on. */
+        public String indexDir = "./data/search";
+        public boolean includeForwardFolders = false;
+        public String commitInterval = "5s";
+        public String feedRetention = "7d";
+        public int maxResults = 1000;
+        public int rateLimitPerMinute = 60;
+        public boolean auditQueries = false;
+        public SearchExtract extract = new SearchExtract();
+    }
+
+    public static class SearchExtract {
+        /** fork: a separate JVM per file, with memory and time limits; inprocess: tests only. */
+        public String isolation = "fork";
+        public int workers = 2;
+        public String forkHeap = "512m";
+        public String timeout = "60s";
+        public DataSize maxFileSize = DataSize.ofMiB(100);
+        public DataSize maxTextPerFile = DataSize.ofMiB(1);
     }
 
     /** File expiry (see "File expiry" in SPEC.md). {@code max} and {@code home.*} use the expiry syntax. */
