@@ -1,0 +1,92 @@
+/* The search box drop-down: name matches as you type, then "Search contents for …". */
+.wrap {
+  position: relative;
+  flex: 1 1 280px;
+  max-width: 560px;
+}
+
+.list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 45;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-nav);
+  cursor: pointer;
+  color: var(--color-ink);
+}
+
+.option[aria-selected="true"],
+.option:hover {
+  background: var(--color-hover);
+}
+
+.optionIcon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-nav);
+  background: var(--color-tile);
+  display: inline-grid;
+  place-items: center;
+}
+
+.optionText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.optionName {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionWhere {
+  font-size: 13px;
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contents {
+  border-top: 1px solid var(--color-line);
+  margin-top: var(--space-1);
+  font-weight: 600;
+}
+
+/* Phones: the list spans the screen under the field. */
+@media (max-width: 639px) {
+  .wrap {
+    order: 5;
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .list {
+    position: fixed;
+    top: auto;
+    left: var(--space-2);
+    right: var(--space-2);
+  }
+}
