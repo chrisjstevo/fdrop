@@ -29,7 +29,7 @@
     "FDROP_LOG_FORMAT": "PLAIN"
   },
   "updateRemoteUserUID": false,
-  "postCreateCommand": "./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [

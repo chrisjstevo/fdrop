@@ -932,7 +932,7 @@ The dev container is Compose based and runs under Podman, so Keycloak runs besid
     "FDROP_LOG_FORMAT": "PLAIN"
   },
   "updateRemoteUserUID": false,
-  "postCreateCommand": "./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -949,6 +949,8 @@ The dev container is Compose based and runs under Podman, so Keycloak runs besid
 
 ```yaml
 # .devcontainer/compose.yaml (run by podman-compose)
+x-podman:
+  in_pod: false                      # podman-compose's default pod rejects dev's userns_mode ("--userns and --pod cannot be set together")
 services:
   certs:                             # one-shot: creates the dev CA and certificates in .devcontainer/certs/
     image: docker.io/library/alpine:3.22
@@ -963,6 +965,7 @@ services:
     network_mode: service:localhost
     userns_mode: keep-id             # rootless Podman: workspace files keep the host user's ownership
     environment:
+      JAVA_HOME: /usr/lib/jvm/msopenjdk-current                # the image's JDK; the java feature (version none, for Maven) points it at an SDKMAN JDK that isn't there
       DOCKER_HOST: unix:///var/run/docker.sock                  # Testcontainers uses Podman's Docker-compatible API
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: ${PODMAN_SOCKET:-/run/podman/podman.sock}
       TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED: "true"
@@ -970,6 +973,7 @@ services:
       - ..:/workspaces/fdrop:z
       - fdrop-m2:/home/vscode/.m2
       - ${PODMAN_SOCKET:-/run/podman/podman.sock}:/var/run/docker.sock
+      - /sys:/sys:ro                 # keep-id can't mount sysfs in localhost's network namespace (another user namespace)
     depends_on:
       certs: { condition: service_completed_successfully }
   keycloak:
@@ -1092,7 +1096,7 @@ volumes:
 }
 ```
 
-- **Host setup.** Install Podman 5 and `podman-compose`. On macOS and Windows, create a rootful Podman machine (`podman machine init --rootful`, then `podman machine start`); on Linux, enable the API socket with `systemctl --user enable --now podman.socket`.
+- **Host setup.** Install Podman 5 and `podman-compose`. On macOS and Windows, create a rootful Podman machine (`podman machine init --rootful`, then `podman machine start`); on Linux, enable the API socket with `systemctl --user enable --now podman.socket`. For IntelliJ, also install Docker Compose v2 (Ubuntu: `docker-compose-v2`, without `docker.io`), which `podman compose` then prefers: IntelliJ adds its own long-syntax bind mount at the workspace folder, and only Docker Compose merges it with the compose file's mount (podman-compose passes both, and Podman rejects the duplicate mount destination). On rootless Linux, set `PODMAN_SOCKET` where the IDE will see it, such as `~/.config/environment.d/` (then log in again), and keep it out of `podman.service` with a drop-in containing `UnsetEnvironment=PODMAN_SOCKET`: Podman reads that variable as its API endpoint and won't start with a plain path.
 - **VS Code.** Set `dev.containers.dockerPath` to `podman` and `dev.containers.dockerComposePath` to `podman-compose` in user settings, so Dev Containers drives Podman. These are user settings, not committed to the repo.
 - **Testcontainers.** The integration tests start MinIO, LocalStack, OpenSSH and Keycloak through the host's Podman API socket, mounted into the dev container as `/var/run/docker.sock`; Podman serves the Docker-compatible API there, so Testcontainers needs no Docker. `PODMAN_SOCKET` defaults to `/run/podman/podman.sock` (right for a rootful Podman machine); on rootless Linux set it to `$XDG_RUNTIME_DIR/podman/podman.sock`. Ryuk, Testcontainers' clean-up container, runs privileged so it can reach the socket.
 - **Rootless and SELinux.** `userns_mode: keep-id` keeps workspace files owned by the host user, so `updateRemoteUserUID` is off; bind mounts carry `:z` so they work on SELinux hosts such as Fedora and RHEL, and the label is ignored elsewhere.
