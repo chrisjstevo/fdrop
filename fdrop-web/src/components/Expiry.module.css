@@ -1,0 +1,53 @@
+.picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.picker > select {
+  width: auto;
+  max-width: 100%;
+}
+
+.picker > input {
+  width: auto;
+  min-width: 140px;
+}
+
+.label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.picker > select {
+  min-height: 40px;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-4);
+}
+
+.problem {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 14px;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-coral);
+}
+
+.cell {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.icon {
+  display: inline-grid;
+  color: var(--color-muted);
+}
+
+.soon {
+  display: inline-grid;
+  color: var(--color-coral);
+}
