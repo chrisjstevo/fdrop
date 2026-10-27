@@ -7,7 +7,8 @@
   "features": {
     "ghcr.io/devcontainers/features/java:1": { "version": "none", "installMaven": "true", "mavenVersion": "3.9" },
     "ghcr.io/devcontainers/features/node:1": { "version": "22" },
-    "ghcr.io/devcontainers/features/aws-cli:1": {}
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0" }
   },
   "forwardPorts": [8443, 8081, 8444, 2222, 5173, 8180, 5432, 9090, 9000, 9001],
   "portsAttributes": {
@@ -27,10 +28,12 @@
     "FDROP_AUTH_OIDC_ISSUER": "http://localhost:8180/realms/fdrop",
     "FDROP_AUTH_OIDC_WEBCLIENTSECRET": "fdrop-web-dev-secret",
     "FDROP_AUTH_OIDC_SFTPCLIENTSECRET": "fdrop-sftp-dev-secret",
-    "FDROP_LOG_FORMAT": "PLAIN"
+    "FDROP_LOG_FORMAT": "PLAIN",
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1"
   },
   "updateRemoteUserUID": false,
-  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && sudo apt-get install -y -q postgresql-client && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 /home/vscode/.nuget && sudo apt-get install -y -q postgresql-client && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [

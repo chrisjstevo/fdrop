@@ -22,6 +22,7 @@
     <module>fdrop-server</module>
     <module>fdrop-cli</module>
     <module>fdrop-http-client-java</module>
+    <module>fdrop-http-client-dotnet</module>
   </modules>
 
   <properties>
@@ -311,6 +312,16 @@
   <build>
     <pluginManagement>
       <plugins>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>3.6.4</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>build-helper-maven-plugin</artifactId>
+          <version>3.6.2</version>
+        </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-clean-plugin</artifactId>

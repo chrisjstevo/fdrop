@@ -1,0 +1,213 @@
+{
+  "description": "When fdrop's clients retry a request (see 'Java client library' and '.NET client library' in SPEC.md). Both clients' unit tests run every case: 'retry' means a second try is made and its success returned; 'error' a client exception without another try; 'api' the response is returned to the caller after one try.",
+  "cases": [
+    {
+      "failure": "connect-failed",
+      "safeToRepeat": true,
+      "expect": "retry",
+      "why": "the request never reached the server"
+    },
+    {
+      "failure": "connect-failed",
+      "safeToRepeat": false,
+      "expect": "retry",
+      "why": "the request never reached the server"
+    },
+    {
+      "failure": "dns-failed",
+      "safeToRepeat": true,
+      "expect": "retry",
+      "why": "the request never reached the server"
+    },
+    {
+      "failure": "dns-failed",
+      "safeToRepeat": false,
+      "expect": "retry",
+      "why": "the request never reached the server"
+    },
+    {
+      "failure": "connect-timeout",
+      "safeToRepeat": true,
+      "expect": "retry",
+      "why": "the request never reached the server"
+    },
+    {
+      "failure": "connect-timeout",
+      "safeToRepeat": false,
+      "expect": "retry",
+      "why": "the request never reached the server"
+    },
+    {
+      "failure": "connection-dropped",
+      "safeToRepeat": true,
+      "expect": "retry"
+    },
+    {
+      "failure": "connection-dropped",
+      "safeToRepeat": false,
+      "expect": "error",
+      "why": "the request may have taken effect"
+    },
+    {
+      "failure": "request-timeout",
+      "safeToRepeat": true,
+      "expect": "retry"
+    },
+    {
+      "failure": "request-timeout",
+      "safeToRepeat": false,
+      "expect": "error",
+      "why": "the request may have taken effect"
+    },
+    {
+      "failure": "tls-connection-lost",
+      "safeToRepeat": true,
+      "expect": "retry"
+    },
+    {
+      "failure": "tls-connection-lost",
+      "safeToRepeat": false,
+      "expect": "error",
+      "why": "the request may have taken effect"
+    },
+    {
+      "failure": "tls-refused",
+      "safeToRepeat": true,
+      "expect": "error",
+      "why": "a refused certificate does not fix itself"
+    },
+    {
+      "failure": "tls-refused",
+      "safeToRepeat": false,
+      "expect": "error",
+      "why": "a refused certificate does not fix itself"
+    },
+    {
+      "failure": "status:429",
+      "safeToRepeat": true,
+      "expect": "retry",
+      "why": "the server did not act on the request"
+    },
+    {
+      "failure": "status:429",
+      "safeToRepeat": false,
+      "expect": "retry",
+      "why": "the server did not act on the request"
+    },
+    {
+      "failure": "status:503",
+      "safeToRepeat": true,
+      "expect": "retry",
+      "why": "the server did not act on the request"
+    },
+    {
+      "failure": "status:503",
+      "safeToRepeat": false,
+      "expect": "retry",
+      "why": "the server did not act on the request"
+    },
+    {
+      "failure": "status:500",
+      "safeToRepeat": true,
+      "expect": "retry"
+    },
+    {
+      "failure": "status:500",
+      "safeToRepeat": false,
+      "expect": "api",
+      "why": "the server may have acted on the request"
+    },
+    {
+      "failure": "status:502",
+      "safeToRepeat": true,
+      "expect": "retry"
+    },
+    {
+      "failure": "status:502",
+      "safeToRepeat": false,
+      "expect": "api",
+      "why": "the server may have acted on the request"
+    },
+    {
+      "failure": "status:504",
+      "safeToRepeat": true,
+      "expect": "retry"
+    },
+    {
+      "failure": "status:504",
+      "safeToRepeat": false,
+      "expect": "api",
+      "why": "the server may have acted on the request"
+    },
+    {
+      "failure": "status:400",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:400",
+      "safeToRepeat": false,
+      "expect": "api"
+    },
+    {
+      "failure": "status:401",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:401",
+      "safeToRepeat": false,
+      "expect": "api"
+    },
+    {
+      "failure": "status:403",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:403",
+      "safeToRepeat": false,
+      "expect": "api"
+    },
+    {
+      "failure": "status:404",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:404",
+      "safeToRepeat": false,
+      "expect": "api"
+    },
+    {
+      "failure": "status:409",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:409",
+      "safeToRepeat": false,
+      "expect": "api"
+    },
+    {
+      "failure": "status:413",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:413",
+      "safeToRepeat": false,
+      "expect": "api"
+    },
+    {
+      "failure": "status:422",
+      "safeToRepeat": true,
+      "expect": "api"
+    },
+    {
+      "failure": "status:422",
+      "safeToRepeat": false,
+      "expect": "api"
+    }
+  ]
+}

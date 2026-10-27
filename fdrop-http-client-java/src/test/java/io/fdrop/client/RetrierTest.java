@@ -1,10 +1,19 @@
 package io.fdrop.client;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import javax.net.ssl.SSLSession;
 import java.io.IOException;
+import java.io.EOFException;
 import java.net.ConnectException;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
+import java.nio.channels.UnresolvedAddressException;
+import java.util.stream.Stream;
+import javax.net.ssl.SSLHandshakeException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
@@ -146,5 +155,61 @@ class RetrierTest {
                 .isInstanceOfSatisfying(FdropRetriesExhaustedException.class,
                         e -> assertThat(e.getMessage()).contains("after 1 attempt:"));
         assertThat(waits).isEmpty();
+    }
+
+    /** The rules shared with the .NET client: {@code client-retry-cases.json}. */
+    static Stream<JsonNode> sharedCases() throws IOException {
+        try (var in = RetrierTest.class.getResourceAsStream("/client-retry-cases.json")) {
+            JsonNode doc = HttpFdropClient.JSON.readTree(in);
+            List<JsonNode> cases = new ArrayList<>();
+            doc.get("cases").forEach(cases::add);
+            return cases.stream();
+        }
+    }
+
+    /** One try failing the way a case names. */
+    private static HttpResponse<byte[]> fail(String failure) throws IOException {
+        if (failure.startsWith("status:")) {
+            return response(Integer.parseInt(failure.substring(7)));
+        }
+        IOException e = switch (failure) {
+            case "connect-failed" -> new ConnectException("Connection refused");
+            case "dns-failed" -> (IOException) new ConnectException("fdrop.invalid").initCause(
+                    new UnresolvedAddressException());
+            case "connect-timeout" -> new HttpConnectTimeoutException("HTTP connect timed out");
+            case "connection-dropped" -> new IOException("Connection reset");
+            case "request-timeout" -> new HttpTimeoutException("request timed out");
+            case "tls-refused" -> new SSLHandshakeException("PKIX path building failed");
+            case "tls-connection-lost" -> (IOException) new SSLHandshakeException(
+                    "Remote host terminated the handshake").initCause(new EOFException());
+            default -> throw new IllegalArgumentException("unknown failure " + failure);
+        };
+        throw e;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sharedCases")
+    void sharedRetryCases(JsonNode c) {
+        String failure = c.get("failure").asText();
+        boolean safe = c.get("safeToRepeat").asBoolean();
+        AtomicInteger tries = new AtomicInteger();
+        Retrier.Attempt<byte[]> attempt = () -> tries.incrementAndGet() == 1 ? fail(failure) : response(200);
+        switch (c.get("expect").asText()) {
+            case "retry" -> {
+                assertThat(retrier.run("op", safe, attempt).statusCode()).as(c.toString()).isEqualTo(200);
+                assertThat(tries).as(c.toString()).hasValue(2);
+            }
+            case "error" -> {
+                assertThatThrownBy(() -> retrier.run("op", safe, attempt)).as(c.toString())
+                        .isExactlyInstanceOf(FdropClientException.class);
+                assertThat(tries).as(c.toString()).hasValue(1);
+            }
+            case "api" -> {
+                assertThat(retrier.run("op", safe, attempt).statusCode()).as(c.toString())
+                        .isEqualTo(Integer.parseInt(failure.substring(7)));
+                assertThat(tries).as(c.toString()).hasValue(1);
+            }
+            default -> throw new IllegalArgumentException(c.toString());
+        }
     }
 }

@@ -23,6 +23,7 @@ services:
     volumes:
       - ..:/workspaces/fdrop:z
       - fdrop-m2:/home/vscode/.m2
+      - fdrop-nuget-home:/home/vscode/.nuget   # all of ~/.nuget: the package cache and NuGet.Config, both written by vscode
       - ${PODMAN_SOCKET:-/run/podman/podman.sock}:/var/run/docker.sock
       - /sys:/sys:ro                 # keep-id can't mount sysfs in localhost's network namespace (another user namespace)
     depends_on:
@@ -76,4 +77,5 @@ services:
       - ./sftp-target:/home/target/.ssh/keys:ro,z   # every file is a key; README.pub keeps the folder non-empty
 volumes:
   fdrop-m2:
+  fdrop-nuget-home:                  # ~/.nuget for fdrop-http-client-dotnet: packages and NuGet settings
   fdrop-pgdata:                      # the dev metadata DB, kept across container rebuilds

@@ -1416,7 +1416,181 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 - **Retries.** Every request is tried up to `maxAttempts` times (default 5; per chunk for uploads) with exponential backoff and jitter, 1 s doubling to 60 s, honouring `Retry-After`. Connection failures, `429` and `503` are always retried; other network errors, timeouts, `500`, `502` and `504` only for requests that are safe to repeat (reads, chunk `PUT`s, `complete`, which the server treats as idempotent, deletes and `PATCH`/`PUT` settings). `mkdir`, `move` and folder creation are not repeated after the request may have reached the server. Creating an upload session is repeated, since an unused session expires on its own. When the tries run out the call throws `FdropRetriesExhaustedException`, carrying the number of attempts and the last failure. A TLS handshake refused for a certificate fails at once.
 - **Errors.** Every failure is an unchecked `FdropClientException`. `FdropApiException` carries the HTTP status and fdrop's RFC 9457 problem type, title and detail.
 - **Authentication.** A bearer token supplier (asked before each request, so the caller can refresh it), HTTP Basic for application accounts (refused over plain HTTP), or a client certificate on the mTLS port (`clientCertificate(cert, key, ca)` from PEM files, PKCS#8 key, or any `SSLContext`). `http://` URLs are refused unless `allowPlainHttp` is set, which is for tests.
-- **Tests.** Unit tests of the retry rules without sleeping, and tests against a real fdrop HTTP server in the test JVM: multi-chunk uploads from a file and a stream, an empty file, download and comparison, refusals as `FdropApiException`, files and folders, an application account's certificate login on the mTLS port, every chunk's first try cut off and sent again, and a chunk that always fails giving up after `maxAttempts` with its session discarded.
+- **Tests.** Unit tests of the retry rules without sleeping (driven by `src/test/resources/client-retry-cases.json`, the table the .NET client's tests also run), and tests against a real fdrop HTTP server in the test JVM: multi-chunk uploads from a file and a stream, an empty file, download and comparison, refusals as `FdropApiException`, files and folders, an application account's certificate login on the mTLS port, every chunk's first try cut off and sent again, and a chunk that always fails giving up after `maxAttempts` with its session discarded.
+
+## .NET client library (fdrop-http-client-dotnet)
+
+`fdrop-http-client-dotnet` is the C# counterpart of `fdrop-http-client-java`: the same API calls, the same upload behaviour and the same retry rules, written as idiomatic .NET. It is for .NET applications that move files through fdrop without knowing its upload protocol. Where this section says nothing different, the Java client's section applies.
+
+### Target and packaging
+
+- **Runtime.** The library targets `net10.0`, the current long-term support release, and is built and tested with the .NET 10 SDK on Linux. It is a portable, framework-dependent library: it has no runtime identifier, no native code and no platform-specific APIs, so the same `Fdrop.Client.dll` runs on the portable `linux-x64` and `linux-arm64` runtimes (glibc and musl). It also runs anywhere else .NET 10 does, but Linux is the only platform built and tested.
+- **Dependencies.** One package, `Microsoft.Extensions.Logging.Abstractions` (for the optional `ILogger`); everything else is the base class library. `HttpClient` with `SocketsHttpHandler` does the HTTP, `System.Text.Json` with a source-generated `JsonSerializerContext` does the JSON, and `System.Security.Cryptography` does the hashing and certificates. Because the JSON is source-generated, the library is trimming- and Native AOT-compatible (`IsAotCompatible`), and the build fails on any trim or AOT warning.
+- **Package.** A NuGet package `Fdrop.Client` with namespace `Fdrop.Client`. The Maven version maps onto a NuGet version (`0.1.0-SNAPSHOT` becomes `0.1.0-dev`, a release `0.1.0` stays `0.1.0`). The package carries XML documentation, symbols (`.snupkg`), SourceLink and a README. Publishing to a feed is a release step, not part of the build.
+- **Build settings** (`Directory.Build.props`): `Nullable` enabled, `TreatWarningsAsErrors`, the .NET analyzers at `latest-recommended`, `Deterministic` and `ContinuousIntegrationBuild` in CI. NuGet versions are pinned centrally (`Directory.Packages.props`) and locked (`packages.lock.json`, restored with `--locked-mode` in CI).
+
+### Layout
+
+```
+fdrop-http-client-dotnet/
+  pom.xml                        # runs the dotnet CLI in the Maven build (see Build)
+  global.json                    # pins the SDK feature band (10.0.1xx, rollForward latestFeature)
+  Fdrop.Client.sln
+  Directory.Build.props
+  Directory.Packages.props
+  src/Fdrop.Client/              # the library
+  tests/Fdrop.Client.Tests/      # xUnit: unit tests and tests against a real fdrop server
+  src/test/java/…/ClientTestServer.java   # starts that fdrop server for the tests (Java, test scope only)
+```
+
+### API
+
+The surface mirrors `FdropClient` in Java, written the .NET way: every call is asynchronous, takes a `CancellationToken`, and returns `Task<T>`. There are no blocking variants.
+
+```csharp
+public interface IFdropClient : IDisposable
+{
+    Task<Account> GetMeAsync(CancellationToken ct = default);
+    Task<UploadHistory> GetUploadHistoryAsync(string? cursor = null, int limit = 50, CancellationToken ct = default);
+
+    Task<Listing> ListAsync(string path, CancellationToken ct = default);
+    Task<FileEntry> UploadAsync(string localPath, string remotePath, UploadOptions? options = null, CancellationToken ct = default);
+    Task<FileEntry> UploadAsync(Stream source, long size, string remotePath, UploadOptions? options = null, CancellationToken ct = default);
+    Task DownloadAsync(string remotePath, string localPath, CancellationToken ct = default);
+    Task<Stream> OpenDownloadAsync(string remotePath, CancellationToken ct = default);
+    Task<FileEntry> CreateDirectoryAsync(string path, CancellationToken ct = default);
+    Task<FileEntry> MoveAsync(string source, string destination, CancellationToken ct = default);
+    Task DeleteAsync(string path, bool recursive = false, CancellationToken ct = default);
+    Task<FileEntry> SetExpiryAsync(string path, string expiresIn, CancellationToken ct = default);
+    Task<FileEntry> SetExpiryAtAsync(string path, DateTimeOffset expiresAt, CancellationToken ct = default);
+    Task<FileEntry> ClearExpiryAsync(string path, CancellationToken ct = default);
+    Task<SearchResult> SearchAsync(string query, string? cursor = null, int limit = 20, CancellationToken ct = default);
+
+    Task<IReadOnlyList<Folder>> GetFoldersAsync(CancellationToken ct = default);
+    Task<Folder> GetFolderAsync(string id, CancellationToken ct = default);
+    Task<Folder> CreateSharedFolderAsync(string name, CancellationToken ct = default);
+    Task<Folder> CreateForwardFolderAsync(string name, string destinationId, int? keepDays = null, CancellationToken ct = default);
+    Task DeleteFolderAsync(string id, CancellationToken ct = default);
+    Task<Folder> PutMemberAsync(string folderId, string username, Permission permission, CancellationToken ct = default);
+    Task RemoveMemberAsync(string folderId, string username, CancellationToken ct = default);
+    Task<IReadOnlyList<ForwardJob>> GetForwardJobsAsync(string folderId, CancellationToken ct = default);
+    Task RetryForwardJobAsync(string folderId, string jobId, CancellationToken ct = default);
+    Task<IReadOnlyList<ForwardDestination>> GetForwardDestinationsAsync(CancellationToken ct = default);
+}
+```
+
+- **Types.** The response types (`Account`, `FileEntry`, `Listing`, `Folder`, `ForwardJob`, `ForwardDestination`, `UploadRecord`, `UploadHistory`, `SearchResult`) are immutable `record` types with the Java client's fields, in .NET naming (`ExpiresAt`, mapped from camelCase JSON). Java's `Me` is `Account` here, and `MoveAsync` takes `source` and `destination`, because `Me` and `To` are Visual Basic keywords, which the .NET analyzers flag in a public API. Times are `DateTimeOffset?` rather than strings, sizes are `long`, and `Permission` is an enum. Unknown JSON fields are ignored, so a newer server does not break an older client.
+- **Creating a client.** `new FdropClient(FdropClientOptions)`. The options are a plain class with `init` properties, so they bind from configuration (`IConfiguration.Get<FdropClientOptions>()`). The names and defaults follow the Java builder:
+
+  | Option | Default | Notes |
+  | --- | --- | --- |
+  | `BaseAddress` | required | `https://`; `http://` only with `AllowPlainHttp` (tests) |
+  | `BearerToken` | — | `Func<CancellationToken, ValueTask<string>>`, asked for before each request so it can be refreshed |
+  | `BasicUsername`, `BasicPassword` | — | application accounts; refused over plain HTTP |
+  | `ClientCertificate` | — | an `X509Certificate2` with its private key; `FdropClientOptions.LoadPemCertificate(certPath, keyPath)` loads PEM files (PKCS#8, or traditional RSA/EC keys, which .NET reads too) |
+  | `TrustedCaCertificates` | system store | an `X509Certificate2Collection`, or `LoadPemCa(path)`; when set, the server's chain must end at one of these (`X509ChainTrustMode.CustomRootTrust`) and nothing else is trusted |
+  | `MaxAttempts` | 5 | per request, and per chunk for uploads; at least 1 |
+  | `InitialBackoff`, `MaxBackoff` | 1 s, 60 s | |
+  | `ConnectTimeout`, `RequestTimeout` | 30 s, 5 min | `RequestTimeout` covers one request, including one whole chunk |
+  | `ParallelChunks` | 3 | |
+  | `UserAgent` | `fdrop-http-client-dotnet/<version>` | |
+
+  Only one of bearer token, Basic and client certificate may be set (a client certificate is used on fdrop's mTLS port). The constructor checks the options and throws `ArgumentException` naming the bad one.
+- **Dependency injection.** A second constructor takes an `HttpClient` the application owns, for example from `IHttpClientFactory`. The client then uses that `HttpClient`'s handler as it is, so TLS settings must be on that handler, and `Dispose` leaves the `HttpClient` alone. With options alone, the client creates and owns a `SocketsHttpHandler` with `PooledConnectionLifetime` of 5 minutes, so DNS changes are seen. The library itself has no DI package dependency.
+- **Thread safety.** One `FdropClient` per server and account, shared and used concurrently, as with `HttpClient`.
+- **Progress.** `UploadOptions(bool Overwrite = false, string? ExpiresIn = null, IProgress<UploadProgress>? Progress = null)`, where `UploadProgress(long Acknowledged, long Total)` reports bytes the server has acknowledged.
+
+### Uploads
+
+Behaviour matches the Java client step for step:
+1. Create the session.
+2. Read the source in the server's chunk size, hashing each chunk and the whole file as it goes.
+3. Send up to `ParallelChunks` chunks at once, each with `X-Chunk-SHA256`. On a `409`, check the session status before sending the chunk again.
+4. Complete with the whole file's SHA-256, polling every 250 ms (doubling to 5 s) while a `202` assembly runs, for at most an hour.
+5. On any failure or cancellation, discard the session with a `DELETE`. This is retried like any request for at most 10 seconds, on a token of its own rather than the caller's (which may be the reason for the abort), so nothing partial is left behind. If the server cannot be reached, it discards the session when it expires.
+
+Some details are specific to .NET:
+- **Memory.** Chunk buffers are rented from `ArrayPool<byte>.Shared` and returned when the chunk is acknowledged or the upload fails, so at most `ParallelChunks` chunks are held at a time. Hashing uses `IncrementalHash`.
+- **Streams.** A `Stream` source needs its length up front, as in Java. When the stream is seekable and `size` is passed as `-1`, the client uses `Length - Position`; for a stream that cannot seek, `-1` is an `ArgumentException`, thrown before the call returns its task. The client never closes the stream it was given. File uploads open the file with `FileOptions.SequentialScan`.
+- **Cancellation.** Cancelling the token stops sending, discards the session as in step 5, and throws `OperationCanceledException` (never `FdropRetriesExhaustedException`).
+
+### Retries and errors
+
+The same rules as Java: up to `MaxAttempts` tries with exponential backoff and jitter, honouring `Retry-After` (seconds or an HTTP date), capped at `MaxBackoff`.
+
+| Failure | Retried |
+| --- | --- |
+| Connection refused, DNS failure, connect timeout (`HttpRequestException` with `HttpRequestError.ConnectionError` or `NameResolutionError`) | always |
+| `429`, `503` | always |
+| Connection dropped mid-request, response ended early, request timeout (`TaskCanceledException` whose cause is a `TimeoutException`, not the caller's token), `500`, `502`, `504` | only requests that are safe to repeat; the others throw `FdropClientException` saying the request may have taken effect |
+| TLS handshake refused (`AuthenticationException`: untrusted server, client certificate not accepted) | never: `FdropClientException` at once |
+| Caller's cancellation | never: `OperationCanceledException` |
+| Any other `4xx` | never: `FdropApiException` |
+
+- **Safe to repeat** means the same requests as in Java: reads, chunk `PUT`s, `complete`, deletes, settings changes (`PATCH`/`PUT`), retrying a forward job, and creating an upload session. Not `mkdir`, `move` or creating folders.
+- **Exceptions.**
+  - `FdropClientException` is the base class.
+  - `FdropApiException` carries `StatusCode`, `ProblemType`, `Title` and `Detail` from fdrop's RFC 9457 body.
+  - `FdropRetriesExhaustedException` carries `Attempts`, with the last failure as `InnerException`.
+
+  Messages name the operation and path, never tokens, passwords or key material.
+- **Shared retry cases.** The retry rules are a table in `fdrop-http-client-java/src/test/resources/client-retry-cases.json`: the failure, whether the request is safe to repeat, and the expected outcome (`retry`, `error` or `api-error`). The Java and .NET unit tests both run every row, so the two clients cannot drift apart. The .NET test project copies the file in at build time.
+
+### Logging and diagnostics
+
+- **Logging.** An optional `ILogger` (from `Microsoft.Extensions.Logging.Abstractions`, the one allowed dependency, and only the abstractions) logs each retry at `Warning`, with the operation, attempt, wait and failure, and each upload's start and finish at `Information`. Nothing is logged without a logger.
+- **Tracing.** An `ActivitySource` named `Fdrop.Client` wraps each public call and each chunk, and `HttpClient`'s own activities nest inside them, so OpenTelemetry users see uploads as traces with no extra setup.
+
+### Tests
+
+- **Framework.** xUnit v3, with plain xUnit assertions (no assertion library), in `tests/Fdrop.Client.Tests`. Unit tests are tagged `[Trait("Category", "Unit")]` and the tests against a server `Integration`. The tests run through VSTest (`UseMicrosoftTestingPlatformRunner` off), not xUnit's Microsoft.Testing.Platform runner, so `dotnet test --filter` and coverlet work the same in the Maven build and in IDEs.
+- **Unit tests:**
+  - the shared retry cases
+  - the backoff waits, run against an injected `TimeProvider` (`FakeTimeProvider`), so nothing sleeps
+  - options validation
+  - problem bodies mapped to `FdropApiException`
+  - PEM loading (PKCS#8 and traditional EC keys) and trusting only the given CA
+  - the exception constructors and epoch-millisecond times
+- **A real fdrop server.** The tests need a running fdrop, which is Java, so the module's Maven build starts one. `ClientTestServer`, a Java test-scope class in this module, uses `fdrop-core`'s test support (fake identity provider, in-memory DB, local storage in a temp folder, 5 MiB chunks). It:
+  1. creates users `alice` and `bob`, and an application account `app-client` with a generated, pinned certificate
+  2. starts the HTTP listener on a free port, and the mTLS listener with a generated server certificate
+  3. writes `target/test-server/server.json` with both URLs and the paths of the CA, client certificate and key
+  4. serves a control endpoint on another loopback port, `POST /stop`, which the build calls after the tests
+
+  The server runs with `fdrop-search` (in-process extraction), so search is tested for real. The .NET tests find it through `FDROP_TEST_SERVER=target/test-server/server.json`, and skip themselves when it is not set. Bearer tokens are the fake provider's (`user:alice`). Each test works in a folder of its own under `/home`, so tests can run in parallel and against a server that earlier runs used, with nothing to reset. A test checks that a session was discarded by asking for it through the public API (`GET /api/v1/uploads/{id}` answers `ABORTED`, or `404`), with the session id read by its fault-injecting handler.
+- **Integration tests** cover the same ground as the Java client's:
+  - multi-chunk uploads from a file and from a seekable and a non-seekable stream, and an empty file, downloaded and compared byte for byte
+  - a short stream refused with its session discarded
+  - refusals as `FdropApiException` (`409` without overwrite, `403` for a read-only member, `404`)
+  - files, expiry and folders
+  - the application account's certificate login on the mTLS port, and an untrusted server certificate failing at once
+  - every chunk's first try cut off by a fault-injecting `DelegatingHandler` and sent again
+  - a chunk that always fails giving up after `MaxAttempts` with no open session left
+  - cancellation mid-upload leaving no open session and throwing `OperationCanceledException`
+  - `ParallelChunks` respected: the handler counts concurrent chunk `PUT`s
+  - a chunk answered `409` checked against the session status, both when the server has it and when it must be sent again
+  - a `202` from `complete` polled until `COMPLETED`, and the file read back from its folder
+  - search finding a file's contents for its owner and not for another user, forward-job errors, and every way of reading a download stream
+- **Coverage.** `coverlet.msbuild` measures the library over both runs (the integration run merges the unit run's results) into `target/coverage/coverage.cobertura.xml`. Generated code (the JSON and logging source generators) and the response records in `Models.cs` are left out. The build fails below 85% line coverage.
+
+### Build
+
+The module is part of the Maven reactor, after `fdrop-http-client-java`, so `./mvnw verify` builds and tests both clients. `pom.xml` (packaging `pom`) runs the `dotnet` CLI with `exec-maven-plugin`, the way `fdrop-web` runs npm:
+
+| Maven phase | Runs |
+| --- | --- |
+| `validate` | `dotnet --version`, failing with a clear message when the SDK from `global.json` is missing |
+| `compile` | `dotnet restore --locked-mode`, `dotnet build -c Release --no-restore` |
+| `test` | `dotnet test --filter Category=Unit` |
+| `pre-integration-test` | starts `ClientTestServer` in the background and waits for `server.json` |
+| `integration-test` | `dotnet test --filter Category=Integration` with coverage and TRX results; a failing test does not stop the build here |
+| `post-integration-test` | stops the test server |
+| `verify` | fails the build when the TRX results show failures or errors, or line coverage is below 85%. Judged here, as failsafe does, so the server is always stopped first |
+| `package` | `dotnet pack -c Release -p:Version=<mapped version>`; the `.nupkg` lands in `target/` |
+
+- `-Ddotnet.skip` skips the module, for machines without the .NET SDK. CI never sets it.
+- Developers can also work in the folder directly with `dotnet build` and `dotnet test`. The unit tests need nothing else. For the integration tests, `./mvnw -pl fdrop-http-client-dotnet test-compile exec:exec@test-server` runs the test server in the foreground until Ctrl-C.
+- Build output goes under the module's `target/` (`bin`, `obj`, coverage, results and the `.nupkg`), so `mvn clean` removes it and nothing new needs ignoring.
 
 ## Security
 
@@ -1587,7 +1761,7 @@ In production the metadata DB is PostgreSQL, and fdrop reaches it only over TLS 
 | Area | Choice |
 | --- | --- |
 | Language / runtime | Java 21 (virtual threads for the storage I/O executor) |
-| Build | Apache Maven 3.9 multi-module reactor: `fdrop-core` (SPI, auth, metadata), `fdrop-storage-local`, `fdrop-storage-s3`, `fdrop-http`, `fdrop-sftp`, `fdrop-web` (UI), `fdrop-search` (Lucene index and Tika extraction), `fdrop-server` (main), `fdrop-cli` (command line client), `fdrop-http-client-java` (Java client library) |
+| Build | Apache Maven 3.9 multi-module reactor: `fdrop-core` (SPI, auth, metadata), `fdrop-storage-local`, `fdrop-storage-s3`, `fdrop-http`, `fdrop-sftp`, `fdrop-web` (UI), `fdrop-search` (Lucene index and Tika extraction), `fdrop-server` (main), `fdrop-cli` (command line client), `fdrop-http-client-java` (Java client library), `fdrop-http-client-dotnet` (.NET client library, built with the .NET 10 SDK) |
 | Web UI | React 19 + TypeScript responsive web app styled after lme.com, built with npm (Vite bundler, Vitest tests, CSS Modules, Radix UI, Nunito Sans) |
 | Identity | Keycloak 26 over OpenID Connect; Nimbus OAuth 2.0 SDK + `nimbus-jose-jwt` in fdrop |
 | HTTP | Netty 4.2 |
@@ -1630,7 +1804,8 @@ The dev container is Compose based and runs under Podman, so Keycloak and Postgr
   "features": {
     "ghcr.io/devcontainers/features/java:1": { "version": "none", "installMaven": "true", "mavenVersion": "3.9" },
     "ghcr.io/devcontainers/features/node:1": { "version": "22" },
-    "ghcr.io/devcontainers/features/aws-cli:1": {}
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/dotnet:2": { "version": "10.0" }
   },
   "forwardPorts": [8443, 8081, 8444, 2222, 5173, 8180, 5432, 9090, 9000, 9001],
   "portsAttributes": {
@@ -1650,10 +1825,12 @@ The dev container is Compose based and runs under Podman, so Keycloak and Postgr
     "FDROP_AUTH_OIDC_ISSUER": "http://localhost:8180/realms/fdrop",
     "FDROP_AUTH_OIDC_WEBCLIENTSECRET": "fdrop-web-dev-secret",
     "FDROP_AUTH_OIDC_SFTPCLIENTSECRET": "fdrop-sftp-dev-secret",
-    "FDROP_LOG_FORMAT": "PLAIN"
+    "FDROP_LOG_FORMAT": "PLAIN",
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1"
   },
   "updateRemoteUserUID": false,
-  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && sudo apt-get install -y -q postgresql-client && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 /home/vscode/.nuget && sudo apt-get install -y -q postgresql-client && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -1694,6 +1871,7 @@ services:
     volumes:
       - ..:/workspaces/fdrop:z
       - fdrop-m2:/home/vscode/.m2
+      - fdrop-nuget-home:/home/vscode/.nuget   # all of ~/.nuget: the package cache and NuGet.Config, both written by vscode
       - ${PODMAN_SOCKET:-/run/podman/podman.sock}:/var/run/docker.sock
       - /sys:/sys:ro                 # keep-id can't mount sysfs in localhost's network namespace (another user namespace)
     depends_on:
@@ -1747,6 +1925,7 @@ services:
       - ./sftp-target:/home/target/.ssh/keys:ro,z   # every file is a key; README.pub keeps the folder non-empty
 volumes:
   fdrop-m2:
+  fdrop-nuget-home:                  # ~/.nuget for fdrop-http-client-dotnet: packages and NuGet settings
   fdrop-pgdata:                      # the dev metadata DB, kept across container rebuilds
 ```
 
@@ -1853,6 +2032,7 @@ volumes:
   - Developers query it from the dev container with `psql "host=localhost dbname=fdrop user=fdrop sslmode=verify-full sslrootcert=.devcontainer/certs/ca.crt sslcert=.devcontainer/certs/fdrop-db.crt sslkey=.devcontainer/certs/fdrop-db.key"` (`postCreateCommand` installs `postgresql-client`), or with `podman exec -it devcontainer-postgres-1 psql -U fdrop` over the local socket. Host tools such as DBeaver use the forwarded port 5432 with the same three files.
   - The data lives in the `fdrop-pgdata` volume; `podman volume rm devcontainer_fdrop-pgdata` starts it empty. Existing H2 data in `data/meta` is not migrated: after switching, delete `data/` too so stored files and metadata start empty together.
   - Unit tests keep using in-memory H2 for speed; nothing in `./mvnw verify` depends on this service. PostgreSQL integration tests start their own server through Testcontainers (see Testing).
+- The .NET 10 SDK is installed (the `dotnet` feature) for `fdrop-http-client-dotnet`, so `./mvnw verify` builds and tests the .NET client in the dev container and in CI like everything else. `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1` are set in `remoteEnv`, and `~/.nuget` is a named volume (`fdrop-nuget-home`) like the Maven cache. The volume covers all of `~/.nuget`, not just `packages/`: NuGet also writes `~/.nuget/NuGet/NuGet.Config` there, and a volume mounted below `~/.nuget` leaves the folder above it owned by root, so restore fails with "Access to the path '/home/vscode/.nuget/NuGet' is denied". `postCreateCommand` gives the new volume to `vscode`, as it does `.m2`.
 - Node 22 and npm are installed so developers can run `npm run dev` and `npm test` in `fdrop-web` directly; the Maven build still pins its own Node and npm through `frontend-maven-plugin`, and both must use the same major version.
 - The dev container, Keycloak and Prometheus share one network namespace, owned by the `localhost` service (a pause container), so `http://localhost:8180/realms/fdrop` is the same issuer for the browser (through the forwarded port) and for the fdrop server. Without this, tokens issued to the browser would fail the server's `iss` check. The namespace belongs to `localhost` rather than `dev` because Podman refuses to remove a container others share: with it, the dev container can be recreated (IntelliJ IDEA does so each time it opens the project) without touching the services beside it.
 - **IntelliJ IDEA** opens the same `devcontainer.json`. Set its Docker connection to Podman, with the Podman machine's rootful connection (`podman-machine-default-root`) on macOS and Windows so the images it builds and the containers `docker-compose` starts share one store, and Docker Compose to a `docker-compose` v2 binary.
@@ -2030,7 +2210,8 @@ scrape_configs:
 11. **M11 Encryption at rest:** `EncryptingStorage` with the `fdrop-stream-v1` format and test vectors, `local`, `aws-kms` and `vault` key providers, resumable and SFTP paths, header and DEK caches, key rotation and the re-encryption job, plaintext migration, admin screen, audit, metrics and alerts.
 12. **M12 Search:** `fdrop-search` with the Lucene index per node, change feed and commit positions, Tika extraction in a forked JVM with shared text cache, access filtering and per-hit checks, `EncryptedDirectory`, the search box drop-down and results page, API, admin screen, rebuild, metrics and alerts.
 13. **M13 Audit log:** batched, hash-chained `audit_event` store with buffer and retention, the separate encrypted Lucene audit index with facets, the Admin: Audit log page with search, filters, side panel, follow live, export and chain verification, API, metrics and alerts.
-14. **M14 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
+14. **M14 Client libraries:** `fdrop-http-client-java`, then `fdrop-http-client-dotnet` with the shared retry cases, the Java test server for its integration tests, the NuGet package, and the .NET SDK in the dev container.
+15. **M15 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
 
 ## Open questions
 

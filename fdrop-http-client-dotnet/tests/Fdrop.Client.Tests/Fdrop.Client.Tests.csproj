@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- run through VSTest (dotnet test's filters and coverlet), not xUnit's Microsoft.Testing.Platform runner -->
+    <UseMicrosoftTestingPlatformRunner>false</UseMicrosoftTestingPlatformRunner>
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+    <!-- test names read as sentences -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <!-- coverage of the library's own code: not the JSON and logging code the source generators write -->
+    <ExcludeByAttribute>GeneratedCodeAttribute</ExcludeByAttribute>
+    <Include>[Fdrop.Client]*</Include>
+    <!-- the response records are data: their compiler-written members are not the library's logic -->
+    <ExcludeByFile>**/Models.cs</ExcludeByFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.msbuild" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fdrop.Client/Fdrop.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the retry rules both clients test against -->
+    <None Include="../../../fdrop-http-client-java/src/test/resources/client-retry-cases.json" Link="client-retry-cases.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

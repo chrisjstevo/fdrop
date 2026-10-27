@@ -24,6 +24,7 @@ The full specification is in [SPEC.md](SPEC.md).
 | `fdrop-server` | `Main`, the shaded fat jar and the container image (Jib) |
 | `fdrop-cli` | `fdrop`, the command line client: `fdrop-cli.jar` and a release `.tar.gz` |
 | `fdrop-http-client-java` | A Java client library for the REST API; uploads are resumable and chunked underneath |
+| `fdrop-http-client-dotnet` | The same client for .NET 10 (NuGet package `Fdrop.Client`), built by Maven with the dotnet CLI |
 
 `deploy/` has an example production config, Prometheus scrape config and alert rules, a Grafana dashboard, a
 Quadlet unit and a local demo Compose file.
@@ -319,6 +320,12 @@ fdrop's problem type and detail. People and scripts can use `.bearerToken(() -> 
 accounts with a password `.basicAuth(user, password)`. `InputStream` uploads need the size up front; each chunk is
 held in memory while it is sent.
 
+## .NET client library
+
+`fdrop-http-client-dotnet` is the C# port of the Java client, packaged as `Fdrop.Client`; see its
+[README](fdrop-http-client-dotnet/README.md). `./mvnw verify` builds it with the .NET 10 SDK (in the dev container) and
+runs its tests against a real fdrop server; `-Ddotnet.skip` skips it on machines without the SDK.
+
 ## Configuration
 
 `fdrop.yaml` (or `$FDROP_CONFIG`); every key can be overridden with an environment variable named after its path,
@@ -368,3 +375,6 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 - Java client: an upload that gives up is not resumed by a later call (unlike `fdrop-cli`, which saves its session);
   the client discards the session and the next upload starts again. Admin endpoints and SSH key and two-factor
   management are not in the client.
+- .NET client: `Me` is `Account` and `MoveAsync` takes `source` and `destination` (Visual Basic keywords are flagged in
+  a public .NET API). The tests run on VSTest rather than xUnit's newer test platform, for `dotnet test --filter` and
+  coverlet.
