@@ -5,8 +5,6 @@ import io.fdrop.core.audit.Audit;
 import io.fdrop.core.auth.Principal;
 import io.fdrop.core.config.Durations;
 import io.fdrop.core.config.FdropConfig;
-import io.fdrop.core.crypto.KeyProvider;
-import io.fdrop.core.crypto.StreamFormat;
 import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Records.FileExpiry;
@@ -47,7 +45,6 @@ import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.BytesRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,6 +94,8 @@ public final class LuceneSearchService implements SearchService {
     private static final int MAX_QUERY = 500;
     private static final int MAX_TERMS = 32;
     private static final int SNIPPET = 160;
+    /** Snippets come from this much of a file's text, so a page of results stays fast with large files. */
+    private static final int SNIPPET_SCAN = 4 * 1024 * 1024;
     private static final Pattern FIELD = Pattern.compile("(?i)(?<![\\w:])(type|name|content):(\"[^\"]*\"|\\S+)");
     private static final Pattern WORD = Pattern.compile("(?<![\\w-])(-?)([\\p{L}\\p{N}]+)(\\*?)");
     private static final Set<String> TYPES = Set.of("pdf", "doc", "sheet", "slides", "text", "email", "other",
@@ -146,7 +145,7 @@ public final class LuceneSearchService implements SearchService {
         this.root = Path.of(cfg.indexDir);
         try {
             Files.createDirectories(root);
-            this.indexKey = indexKey();
+            this.indexKey = IndexFiles.key(root, app.encryption);
             open(root.resolve("index"));
         } catch (IOException e) {
             throw new UncheckedIOException("could not open the search index in " + root, e);
@@ -155,50 +154,8 @@ public final class LuceneSearchService implements SearchService {
 
     // ---- the index on disk ----
 
-    /** The index key, wrapped by the storage KEK in {@code index.key}; null when encryption at rest is off. */
-    private byte[] indexKey() throws IOException {
-        KeyProvider kp = app.encryption.keyProvider();
-        Path file = root.resolve("index.key");
-        if (kp == null || !app.encryption.enabled()) {
-            if (Files.exists(file) && kp != null) {
-                return readKey(file, kp);
-            }
-            if (Files.exists(file)) {
-                wipe(root.resolve("index"));
-                Files.delete(file);
-            }
-            return null;
-        }
-        if (Files.exists(file)) {
-            return readKey(file, kp);
-        }
-        wipe(root.resolve("index"));
-        byte[] key = StreamFormat.newDataKey();
-        writeKey(file, kp, key);
-        return key;
-    }
-
-    private static byte[] readKey(Path file, KeyProvider kp) throws IOException {
-        String[] f = Files.readString(file, StandardCharsets.UTF_8).strip().split("\\|", 2);
-        byte[] key = kp.unwrap(f[0], Base64.getDecoder().decode(f[1]));
-        if (!f[0].equals(kp.primaryKeyId()) && !kp.primaryKeyId().startsWith("vault:")) {
-            writeKey(file, kp, key);
-        }
-        return key;
-    }
-
-    private static void writeKey(Path file, KeyProvider kp, byte[] key) throws IOException {
-        KeyProvider.Wrapped w = kp.wrap(key);
-        Path tmp = file.resolveSibling("index.key.tmp");
-        Files.writeString(tmp, w.keyId() + "|" + Base64.getEncoder().encodeToString(w.wrapped()),
-                StandardCharsets.UTF_8);
-        Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-    }
-
     private Directory directory(Path path) throws IOException {
-        Directory fs = FSDirectory.open(path);
-        return indexKey == null ? fs : new EncryptedDirectory(fs, indexKey);
+        return IndexFiles.directory(path, indexKey);
     }
 
     private IndexWriterConfig writerConfig() {
@@ -225,17 +182,6 @@ public final class LuceneSearchService implements SearchService {
             needsRebuild = oldest > applied + 1;
         }
         lastCommit = System.currentTimeMillis();
-    }
-
-    private static void wipe(Path path) throws IOException {
-        if (!Files.exists(path)) {
-            return;
-        }
-        try (Stream<Path> s = Files.walk(path)) {
-            for (Path p : s.sorted(Comparator.reverseOrder()).toList()) {
-                Files.delete(p);
-            }
-        }
     }
 
     // ---- indexing ----
@@ -439,7 +385,7 @@ public final class LuceneSearchService implements SearchService {
         try {
             long seq = repo.latest();
             Path next = root.resolve("index-next");
-            wipe(next);
+            IndexFiles.wipe(next);
             Files.createDirectories(next);
             try (Directory nd = directory(next); IndexWriter nw = new IndexWriter(nd, writerConfig())) {
                 for (String top : List.of("users", "folders")) {
@@ -472,7 +418,7 @@ public final class LuceneSearchService implements SearchService {
             writer.close();
             dir.close();
             Path live = root.resolve("index");
-            wipe(live);
+            IndexFiles.wipe(live);
             Files.move(next, live);
             open(live);
             oldManager.close();
@@ -783,7 +729,8 @@ public final class LuceneSearchService implements SearchService {
     }
 
     /** Up to two snippets of about 160 characters around the first matches, as plain text segments. */
-    private List<List<Segment>> snippets(String content, Terms terms) {
+    private List<List<Segment>> snippets(String text, Terms terms) {
+        String content = text.length() > SNIPPET_SCAN ? text.substring(0, SNIPPET_SCAN) : text;
         List<int[]> marks = matches(content, analyzers.content, terms, 50);
         List<List<Segment>> out = new ArrayList<>();
         int covered = -1;

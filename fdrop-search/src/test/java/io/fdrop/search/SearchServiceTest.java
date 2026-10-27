@@ -291,6 +291,17 @@ class SearchServiceTest {
     }
 
     @Test
+    void findsWordsDeepInLargeTextFiles() throws Exception {
+        start("inprocess");
+        String filler = "lorem ipsum dolor sit amet ".repeat(3 * 1024 * 1024 / 27);
+        put(alice, "/home/large.txt", filler + "deepcanyonword at the end");
+        assertThat(find(alice, "deepcanyonword")).containsExactly("/home/large.txt");
+        Hit h = app.search.search(alice, new SearchService.Query("deepcanyonword", "all", null, null, null, null, null,
+                20)).results().get(0);
+        assertThat(h.snippets()).isNotEmpty();
+    }
+
+    @Test
     void extractsInASeparateProcess() throws Exception {
         start("fork");
         put(alice, "/home/forked.txt", "tapirexpedition notes");

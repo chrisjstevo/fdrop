@@ -6,6 +6,11 @@ import io.fdrop.core.auth.OidcClient;
 import io.fdrop.core.auth.TwoFactorService;
 import io.fdrop.core.auth.UserStatusCache;
 import io.fdrop.core.audit.Audit;
+import io.fdrop.core.audit.AuditIndex;
+import io.fdrop.core.audit.AuditIndexFactory;
+import io.fdrop.core.audit.AuditService;
+import io.fdrop.core.audit.AuditStore;
+import io.fdrop.core.audit.NoAuditIndex;
 import io.fdrop.core.config.FdropConfig;
 import io.fdrop.core.crypto.EncryptingStorage;
 import io.fdrop.core.crypto.KeyProviders;
@@ -51,6 +56,8 @@ public final class Fdrop implements AutoCloseable {
     public final FdropConfig config;
     public final FdropMetrics metrics;
     public final Db db;
+    public final AuditStore auditStore;
+    public final AuditService audit;
     public final StorageBackend storage;
     public final EncryptingStorage encryption;
     public final UserRepo users;
@@ -100,6 +107,9 @@ public final class Fdrop implements AutoCloseable {
         this.ssh = ssh;
         this.metrics = new FdropMetrics(config.management.histogramBuckets);
         this.db = new Db(config.db, metrics.registry());
+        // first, so the events logged while starting up reach the DB too
+        this.auditStore = new AuditStore(config.audit, db, metrics);
+        Audit.setSink(auditStore);
         this.encryption = encryptingStorage(config, backend, metrics);
         this.storage = encryption;
         this.users = new UserRepo(db);
@@ -139,6 +149,7 @@ public final class Fdrop implements AutoCloseable {
                 metrics, appAccounts, searchRepo);
         records.resetStuckSending(Long.MAX_VALUE);
         this.search = loadSearch();
+        this.audit = new AuditService(config.audit, auditStore, loadAuditIndex(), metrics, clock);
     }
 
     /** The backend, timed, wrapped in encryption at rest; with encryption on, a broken KEK stops startup. */
@@ -172,13 +183,23 @@ public final class Fdrop implements AutoCloseable {
         return new NoSearch();
     }
 
+    /** The Lucene audit index from fdrop-search when it is on the classpath; otherwise browsing only. */
+    private AuditIndex loadAuditIndex() {
+        for (AuditIndexFactory f : java.util.ServiceLoader.load(AuditIndexFactory.class)) {
+            return f.create(this);
+        }
+        return new NoAuditIndex();
+    }
+
     @Override
     public void close() throws Exception {
+        audit.close();
         search.close();
         expirySweeper.close();
         encryptionService.close();
         janitor.close();
         storage.close();
+        auditStore.close();
         db.close();
     }
 }

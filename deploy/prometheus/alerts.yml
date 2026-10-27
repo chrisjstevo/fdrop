@@ -102,6 +102,31 @@ groups:
         annotations:
           summary: More than 20% of search text extractions fail or time out
 
+      - alert: FdropAuditWriteFailing
+        expr: |
+          increase(fdrop_audit_write_failures_total{job="fdrop"}[5m]) > 0
+            or max(fdrop_audit_buffer_events{job="fdrop"}) > 5000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Audit events are not reaching the DB (the buffer is over half full of the default 10,000, or events were dropped); they are still in the log files
+
+      - alert: FdropAuditChainBroken
+        expr: min(fdrop_audit_chain_intact{job="fdrop"}) < 1
+        labels:
+          severity: critical
+        annotations:
+          summary: The audit log in the DB was changed after it was written; Admin, Audit log, Verify chain shows the first broken event
+
+      - alert: FdropAuditIndexLag
+        expr: max(fdrop_audit_index_lag_seconds{job="fdrop"}) > 900
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A node's audit index is more than 15 minutes behind; recent events are listed but not searchable there
+
       - alert: FdropDecryptionFailures
         expr: increase(fdrop_encryption_failures_total{job="fdrop"}[5m]) > 0
         labels:

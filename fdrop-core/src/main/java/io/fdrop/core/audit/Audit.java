@@ -17,6 +17,24 @@ public final class Audit {
     private static final Logger log = LoggerFactory.getLogger("fdrop.audit");
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /** Also receives every event, after its log line is written: the DB copy (see {@code AuditStore}). */
+    public interface Sink {
+        void accept(long ts, String event, ObjectNode fields, String line);
+    }
+
+    private static volatile Sink sink;
+
+    public static void setSink(Sink s) {
+        sink = s;
+    }
+
+    /** Removes {@code s} if it is still the sink, so a closed application stops receiving events. */
+    public static void clearSink(Sink s) {
+        if (sink == s) {
+            sink = null;
+        }
+    }
+
     private Audit() {
     }
 
@@ -26,7 +44,8 @@ public final class Audit {
      */
     public static void log(String event, Object... fields) {
         ObjectNode n = JSON.createObjectNode();
-        n.put("ts", Instant.now().toString());
+        Instant now = Instant.now();
+        n.put("ts", now.toString());
         n.put("event", event);
         for (int i = 0; i + 1 < fields.length; i += 2) {
             Object v = fields[i + 1];
@@ -41,10 +60,17 @@ public final class Audit {
                 n.put(k, v.toString());
             }
         }
+        String line;
         try {
-            log.info(JSON.writeValueAsString(n));
+            line = JSON.writeValueAsString(n);
         } catch (JsonProcessingException e) {
             log.warn("audit serialisation failed for {}", event);
+            return;
+        }
+        log.info(line);
+        Sink s = sink;
+        if (s != null) {
+            s.accept(now.toEpochMilli(), event, n, line);
         }
     }
 }

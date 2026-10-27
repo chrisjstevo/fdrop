@@ -41,6 +41,7 @@ public final class Main {
         app.expirySweeper.start();
         app.encryptionService.start();
         app.search.start();
+        app.audit.start();
         ManagementServer management = new ManagementServer(app).start();
         HttpServer http = new HttpServer(app).start();
         SftpServer sftp = cfg.sftp.enabled ? new SftpServer(app).start() : null;

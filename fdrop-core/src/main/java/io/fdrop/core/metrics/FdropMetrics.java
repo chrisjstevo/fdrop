@@ -72,7 +72,14 @@ public final class FdropMetrics {
             Map.entry("fdrop_search_documents", Set.of()),
             Map.entry("fdrop_search_index_lag_seconds", Set.of()),
             Map.entry("fdrop_search_extract_total", Set.of("result")),
-            Map.entry("fdrop_search_extract_seconds", Set.of()));
+            Map.entry("fdrop_search_extract_seconds", Set.of()),
+            Map.entry("fdrop_audit_events_total", Set.of("group")),
+            Map.entry("fdrop_audit_write_failures_total", Set.of()),
+            Map.entry("fdrop_audit_buffer_events", Set.of()),
+            Map.entry("fdrop_audit_index_lag_seconds", Set.of()),
+            Map.entry("fdrop_audit_queries_total", Set.of("outcome")),
+            Map.entry("fdrop_audit_query_seconds", Set.of()),
+            Map.entry("fdrop_audit_chain_intact", Set.of()));
 
     private final PrometheusMeterRegistry registry;
     private final Duration[] buckets;
@@ -82,6 +89,10 @@ public final class FdropMetrics {
     private final AtomicLong expiryFiles = new AtomicLong();
     private final AtomicLong expiryOverdue = new AtomicLong();
     private final AtomicLong searchDocuments = new AtomicLong();
+    private final AtomicLong auditBuffer = new AtomicLong();
+    private final AtomicLong auditChainIntact = new AtomicLong(1);
+    private final java.util.concurrent.atomic.AtomicReference<Double> auditLag =
+            new java.util.concurrent.atomic.AtomicReference<>(0.0);
     private final java.util.concurrent.atomic.AtomicReference<Double> searchLag =
             new java.util.concurrent.atomic.AtomicReference<>(0.0);
     private final MultiGauge users;
@@ -114,6 +125,12 @@ public final class FdropMetrics {
         Gauge.builder("fdrop.storage.used", storageUsed, AtomicLong::get).baseUnit("bytes").register(registry);
         Gauge.builder("fdrop.expiry.files", expiryFiles, AtomicLong::get).register(registry);
         Gauge.builder("fdrop.search.documents", searchDocuments, AtomicLong::get).register(registry);
+        Gauge.builder("fdrop.audit.buffer.events", auditBuffer, AtomicLong::get).register(registry);
+        Gauge.builder("fdrop.audit.chain.intact", auditChainIntact, AtomicLong::get).register(registry);
+        Gauge.builder("fdrop.audit.index.lag", auditLag, java.util.concurrent.atomic.AtomicReference::get)
+                .baseUnit("seconds").register(registry);
+        // so the failure counter exists (at 0) before the first failure, for the alert
+        Counter.builder("fdrop.audit.write.failures").register(registry);
         Gauge.builder("fdrop.search.index.lag", searchLag, java.util.concurrent.atomic.AtomicReference::get)
                 .baseUnit("seconds").register(registry);
         Gauge.builder("fdrop.expiry.overdue.files", expiryOverdue, AtomicLong::get).register(registry);
@@ -319,6 +336,34 @@ public final class FdropMetrics {
         if (nanos > 0) {
             timer("fdrop.search.extract").record(nanos, TimeUnit.NANOSECONDS);
         }
+    }
+
+    public void auditEvent(String group) {
+        Counter.builder("fdrop.audit.events").tags("group", group).register(registry).increment();
+    }
+
+    /** An audit event that only reached the log file, not the DB. */
+    public void auditWriteFailure() {
+        Counter.builder("fdrop.audit.write.failures").register(registry).increment();
+    }
+
+    public void auditBuffer(long waiting) {
+        auditBuffer.set(waiting);
+    }
+
+    public void auditIndexLag(double seconds) {
+        auditLag.set(seconds);
+    }
+
+    public void auditQuery(String outcome, long nanos) {
+        Counter.builder("fdrop.audit.queries").tags("outcome", outcome).register(registry).increment();
+        if (nanos > 0) {
+            timer("fdrop.audit.query").record(nanos, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    public void auditChainIntact(boolean intact) {
+        auditChainIntact.set(intact ? 1 : 0);
     }
 
     /** Snapshot values refreshed in the background from the metadata DB. */

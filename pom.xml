@@ -152,6 +152,11 @@
         <artifactId>lucene-queryparser</artifactId>
         <version>${lucene.version}</version>
       </dependency>
+      <dependency>
+        <groupId>org.apache.lucene</groupId>
+        <artifactId>lucene-facet</artifactId>
+        <version>${lucene.version}</version>
+      </dependency>
       <!-- Tika's parsers ask for several versions of these; pin the newest so the build converges -->
       <dependency>
         <groupId>commons-codec</groupId>

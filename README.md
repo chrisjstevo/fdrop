@@ -263,6 +263,14 @@ searches names and contents. The index lives in `data/search` and catches up wit
 **Admin: Search index** shows how far behind it is and can rebuild it. Text is read from documents by Apache Tika in a
 separate short-lived JVM per file.
 
+### Trying the audit log
+
+Sign in as an admin with two factors and open **Admin: Audit log**. Every event since the database was created is
+there, newest first; sign in from another browser and it appears on the next refresh, or tick **Follow live**. Try
+`outcome:refused`, `group:sign-in ip:10.0.0.0/8` or `path:/shared -event:download` in the search box. The audit
+index lives in `data/audit-index`, separate from the file search index, and every look at the page is itself
+recorded as an `audit.viewed`, `audit.searched` or `audit.exported` event.
+
 ### Encryption at rest
 
 Every stored file is encrypted (see SPEC.md, Encryption at rest). The dev config has a fixed development key and
@@ -306,3 +314,11 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
   `SELECT … FOR UPDATE SKIP LOCKED`, and uses the nodes' clocks rather than the database's, since every timestamp
   in the schema is epoch milliseconds written by fdrop. S3 objects are deleted one `DeleteObject` at a time, after a
   `HeadObject` for the quota, not in `DeleteObjects` batches.
+- Audit log: each row's hash covers the previous hash, node, `node_seq`, id, time and the exact log line (which holds
+  every field); the columns shown in the table are derived from that line and checked against it by **Verify
+  chain**. The `REVOKE`/`GRANT` for an append-only DB user are in a comment in `V6__audit_log.sql` for operators to
+  run, not run by the migration. `audit.viewed` is recorded once per admin per 5 minutes, so **Follow live** does not
+  fill the log with it. Several groups or outcomes are passed comma separated (`group=Sign-in,Files`). On phones the
+  filters wrap above the list instead of sitting in a sheet. Every node runs the nightly prune and the chain check;
+  a second run finds nothing to do. An export over `audit.exportMax` is refused with `413`
+  (`audit-export-too-large`).

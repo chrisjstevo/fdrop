@@ -15,6 +15,7 @@ fdrop is a single JVM service that lets users upload and download files through 
 - Per-user isolation: each user sees only their own files plus the shared and forward folders they belong to.
 - Every stored file encrypted at rest with streaming, per-file envelope encryption, on both backends.
 - Full-text search over names and contents with Lucene, never returning anything from a file the user cannot open.
+- A complete, tamper-evident audit log that admins can read and search in the web app, with its own Lucene index.
 
 ### Non-goals (v1)
 
@@ -76,6 +77,7 @@ Browser uploads go through the upload handlers, which track chunk sessions in th
 
 - **Threading:** Netty event loops and MINA NIO threads only parse protocol frames. All storage calls run on a virtual-thread executor, and results are handed back to the channel, so a slow S3 call never blocks a network thread.
 - **Backpressure:** HTTP uploads pause `autoRead` while a write is pending; SFTP relies on MINA's window size (default 2 MiB) so a client cannot outrun the backend.
+- **Audit log:** every audit event goes to the log file as before and, in batches, to an append-only, hash-chained `audit_event` table; each node also keeps a separate Lucene audit index built from that table, used only by the admin Audit log page (see Audit log).
 - **Search:** an embedded Lucene index on each node, fed from a change feed in the metadata DB, with text extracted once per file by Tika in a separate short-lived JVM (see Search). It lives in the `fdrop-search` module behind a `SearchService` interface in `fdrop-core`, so a build without it simply has no search.
 - **Encryption:** the backend is always wrapped in `EncryptingStorage`, so every byte written through the Storage SPI is encrypted and every byte read is decrypted and authenticated, whichever front end or worker made the call (see Encryption at rest).
 - **Lifecycle:** `fdrop-server` main loads config, runs DB migrations, initialises the chosen backend and its encryption keys, starts HTTP and SFTP, and on SIGTERM stops accepting connections, waits up to 30 s for in-flight transfers, then closes.
@@ -268,6 +270,7 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8080; 8443 with TLS)
 | GET/POST/DELETE | `/api/v1/me/ssh-keys` | Manage the user's SFTP public keys |
 | GET | `/api/v1/search?q=&scope=&path=&type=&modifiedFrom=&sort=&cursor=&limit=` | Search names and contents of every file the caller can see (see Search) |
 | GET | `/api/v1/search/suggest?q=` | Up to 8 name matches for the search box drop-down |
+| GET | `/api/v1/admin/audit?q=&group=&event=&user=&ip=&outcome=&from=&to=&cursor=` | Read and search the audit log; also `/{id}`, `/export`, `/events`, `/verify` and `/index` (admin; see Audit log) |
 | GET/POST | `/api/v1/admin/search`, `/api/v1/admin/search/rebuild` | This node's search index status; rebuild it (admin) |
 | GET | `/api/v1/me/uploads?wentTo=&q=&from=&to=&sort=&cursor=` | The My uploads list: the user's own upload records, filtered, sorted and paged, with count and total size for the filter |
 | GET | `/api/v1/files?path=/home/docs` | List a directory in the virtual tree (name, size, mtime, type, `expiresAt`, `expirySource`), with the folder's default and maximum expiry |
@@ -890,7 +893,7 @@ Users search the names and contents of every file they can see: their own Home a
 | --- | --- |
 | File and folder names, in Home and shared folders | Forward folders: their files pass through on their way to a partner (`search.includeForwardFolders` turns them on) |
 | The text of plain text, CSV, JSON, XML, Markdown, source code, HTML (text only), RTF, PDF, Word, Excel, PowerPoint, OpenDocument and email (`.eml`) files | Images and scanned PDFs (no OCR), audio and video, and the contents of archives (`.zip` is found by name only) |
-| The first `search.extract.maxTextPerFile` (1 MiB) of text per file, from files up to `search.extract.maxFileSize` (100 MiB) | Password-protected or encrypted documents, which are found by name and shown as "contents not searchable" |
+| The first `search.extract.maxTextPerFile` (20 MiB) of text per file, from files up to `search.extract.maxFileSize` (100 MiB) | Password-protected or encrypted documents, which are found by name and shown as "contents not searchable" |
 
 - **Name matches rank first** (field boosts: name ×3, folder path ×1.5, contents ×1), then by Lucene's BM25 relevance, with newer files ahead on ties.
 - **Text analysis:** contents use Lucene's `StandardAnalyzer` (Unicode word breaks, lower-casing, no stop words, so "to be" finds what it should). Names use an analyzer that also splits on `_`, `-`, `.`, digits and camelCase, so `nightly-2026-10-26.csv` is found by `nightly`, `2026` or `csv`, plus edge n-grams so the first letters of a name match while typing.
@@ -961,6 +964,7 @@ Each node's indexer reads the feed in `seq` order and records the last `seq` it 
 - Extraction runs in a **separate, short-lived JVM** started by fdrop for each file (`ExtractMain`: the document on stdin, its text on stdout) with a 512 MiB heap (`search.extract.forkHeap`), a 60 s time limit (`search.extract.timeout`) and no network, because document parsers process untrusted files and have a history of crashes, runaway memory and vulnerabilities. A crash or timeout marks the file `failed`; its name is still indexed.
 - At most `search.extract.workers` (2) extractions run per node, at low priority, so search indexing never slows uploads or downloads. Extraction is skipped for files over `maxFileSize`, and the text is cut at `maxTextPerFile`.
 - The text objects are deleted with their file and do not count against anyone's quota.
+- The cached text is keyed by file version and by `maxTextPerFile`, so after changing the limit a rebuild (or the next upload of a file) reads the files again with the new limit.
 
 **Rebuild.** An admin can rebuild a node's index from the **Admin: Search index** screen (or by deleting `search.indexDir` and restarting): the node lists the storage, indexes every file from its cached text (extracting only what is missing), and keeps answering from the old index until the new one is complete, then swaps.
 
@@ -980,6 +984,7 @@ The search field in the top bar ("Search files and contents") starts every searc
 - Each result is a row in the workspace style: its file icon on a tile, the name with matched words in bold, its location as a breadcrumb (`Shared: Invoices / 2026`), and up to two snippets of about 160 characters from the contents with the matched words marked, then size, modified date and expiry. Row actions: open the folder (the file highlighted), download, and set expiry where the user may write.
 - A file whose contents could not be read shows "Name match only" with the reason on hover (for example "Password-protected", "Too large to search").
 - 20 results per page, with "Load more" (a cursor, up to `search.maxResults`, 1,000). No results: suggestions to check spelling, use fewer words, or search everywhere instead of one folder.
+- Snippets come from the first 4 MiB of a file's text; a file that matches only further in is still found, with no snippet. This keeps a page of results fast when files hold up to 20 MiB of text.
 - Snippets are sent as plain text segments (`[{ "text": "…", "match": true }, …]`), never as HTML, and rendered by React as text with `<mark>`, so a document's text cannot inject markup.
 - Under the results, a muted note: "Files uploaded in the last few seconds may not appear yet."
 
@@ -1039,6 +1044,114 @@ Authorization: Bearer eyJhbGciOi…
 - `search_change(seq BIGINT generated, op INDEX|DELETE|MOVE, storage_key, to_key, at)`, indexed on `seq`; pruned after `search.feedRetention`.
 - `search_extract(storage_key, etag, state PENDING|OK|UNSUPPORTED|TOO_LARGE|PROTECTED|FAILED, text_key, claimed_by, claimed_until, attempts, updated_at)`, primary key `(storage_key, etag)`.
 - On each node, outside the DB: the Lucene index in `search.indexDir`, its commit user data holding the last applied `seq`, and `index.key` (the wrapped index key).
+
+## Audit log
+
+Admins can read and search the whole audit log in the web app, on an **Admin: Audit log** page. Until now the audit log has been JSON lines in each node's log file, which only someone with shell access to every node could read. It still goes there, for log shipping and SIEMs. Every event is now also kept in the metadata DB, where all nodes' events are together, and indexed with Lucene in an **audit index that is separate from the file search index**: different documents, fields, analyzers and access rules, a different directory, and no way for a query to cross between them.
+
+### What is recorded
+
+Every call to `Audit.log` produces one event with:
+
+| Field | Notes |
+| --- | --- |
+| `id` | A UUID, shown in the UI and used in links |
+| `ts` | When it happened, to the millisecond (UTC) |
+| `node` | The node that recorded it |
+| `event` | The event name already used in the log (`login`, `upload`, `download`, `folder.member`, `file.expired`, `storage.decrypt.failed`, …) |
+| `group` | A family derived from the name, for filtering: **Sign-in**, **Files**, **Folders and sharing**, **Forwarding**, **Expiry**, **Accounts**, **Encryption**, **Search**, **Audit**, **System** |
+| `user` | Who acted: a username, an application account, or `system` |
+| `ip`, `protocol` | Client address (as recorded today, through trusted proxies) and HTTP or SFTP |
+| `outcome` | `success`, `failure` or `refused`, from the event's own `outcome` or `result` field, or from its name (`….refused`, `….failed`) |
+| `summary` | One line for the table, built from the event's main fields, e.g. "uploaded /shared/Invoices/2026-10.pdf (1.4 MB)" |
+| `data` | Every field the event carried, as JSON, exactly as written to the log file |
+
+Audit events never contain passwords, keys, tokens, file contents or search query text (unless an operator turned on `search.auditQueries`); that rule is unchanged and covered by tests. They do contain personal data (usernames, IP addresses, file names), which is why only admins can see them and every look is itself recorded (below).
+
+### Storage and integrity
+
+- **Writing.** `Audit.log` still writes its JSON line to the `fdrop.audit` logger first, then hands the event to the **audit store**, which inserts it into `audit_event` in batches (every 200 ms or 500 events). A request never waits for the DB. If the DB is unreachable, events wait in a bounded buffer (`audit.bufferSize`, 10,000) and are written when it is back. If the buffer fills, further events are dropped from the DB copy only: the log file still has them, `fdrop_audit_write_failures_total` counts them and `FdropAuditWriteFailing` fires.
+- **Append-only.** fdrop's code never updates or deletes an audit row, except the retention prune below. Operators can also take `UPDATE` and `DELETE` on `audit_event` away from fdrop's DB user, leaving only retention to a separate maintenance role, and the migration ships the `GRANT`s for that.
+- **Tamper evidence.** Each node chains its own events: every row stores `node_seq` (1, 2, 3… per node) and `hash = SHA-256(prev_hash ‖ canonical JSON of the row)`. Editing, deleting or reordering any row breaks the chain from that point on. Chains are per node so nodes never wait for each other.
+  - **Verify chain** on the page, and a daily background check, walk every node's chain and report the first broken link.
+  - A broken chain is an `audit.chain.broken` event and fires the critical `FdropAuditChainBroken` alert.
+  - The chain shows that the database copy was changed after the fact. It cannot stop someone with DB write access from rewriting a whole chain end to end. For that, ship the log file to write-once storage too, which this feature keeps possible.
+- **Retention.** Events older than `audit.retention` (default 400 days) are pruned nightly. The prune records an `audit.pruned` event with the cut-off and the hash of the last pruned row of each node, stored as that chain's new anchor in `audit_anchor`, so verification still works from there on.
+
+### The audit index
+
+The audit index is a Lucene index on each node, in `audit.indexDir` (default `./data/audit-index`), never inside `search.indexDir`. It is built from `audit_event` in `seq` order, the same way the file search index follows its change feed. The last `seq` applied is kept in each commit, so a restart continues where it stopped and a missing or broken index is rebuilt from the DB. With encryption at rest on it is encrypted the same way as the search index (`EncryptedDirectory`, under its own index key wrapped by the storage KEK), since it holds personal data.
+
+| Field | Type | Use |
+| --- | --- | --- |
+| `seq`, `ts` | `LongPoint` + doc values, stored | Ordering, date ranges, paging |
+| `event`, `group`, `outcome`, `protocol`, `node` | `StringField` + `SortedSetDocValues` | Exact filters and facet counts |
+| `user` | `StringField` (exact) and `TextField` | `user:alice` and free-text matches |
+| `ip` | `InetAddressPoint` and `StringField` | Exact address, and ranges for CIDR filters (`ip:10.20.0.0/16`) |
+| `path` | `TextField` with the path analyzer from Search, plus `StringField` for prefixes | `path:/shared/Invoices` finds everything under it |
+| `text` | `TextField` (standard analyzer) | Every field name and value of the event, for free text |
+| `summary` | Stored | Shown in results |
+
+The full event (`data`) is not stored in the index: results are read back from `audit_event` by `seq`. So the DB stays the single record, and the index can be thrown away and rebuilt at any time.
+
+### The Admin: Audit log page
+
+Reached from the Admin group in the sidebar, for holders of `fdrop-admin` signed in with two factors (like every admin page). It looks like the other workspace pages: a table on desktop, cards on phones.
+
+- **Default view:** the newest events first, read straight from the DB, so an event is there the moment it is written, without waiting for the index. 50 per page, with "Load more" (paged by `seq`, so new events never shift pages).
+- **Columns:** Time (in the admin's time zone, exact UTC on hover), Event (name with a group badge), User, IP, Outcome (failures and refusals with the coral error icon), Summary. A row opens a side panel with every field of the event, its node, its position in the chain, a **Copy as JSON** button, and links: "Events by this user", "Events from this IP", and "Other events for this path" (each fills in the filter).
+- **Search and filters:**
+  - The search box takes free text over every field, and the same small syntax as file search (`"phrase"`, `-word`, `a | b`, `prefix*`), plus `event:`, `group:`, `user:`, `ip:` (an address or a CIDR), `path:`, `outcome:` and `node:`. Examples: `user:erp-export outcome:refused`, `ip:203.0.113.0/24 group:sign-in`, `path:/shared/Finance -event:download`.
+  - Beside it: a date range (last hour, 24 hours, 7 days, 30 days, custom), group chips with counts for the current search (Lucene facets), and outcome chips.
+  - Searching uses the audit index. A note says when the index is more than a few seconds behind ("Searching events up to 14:02:11; newer events appear shortly").
+- **Follow live:** a toggle that refreshes the default view every 5 seconds, for watching sign-ins during an incident. It pauses while a row is open.
+- **Export:** the current search or filter as JSON Lines (the exact log lines) or CSV, up to `audit.exportMax` (100,000) events, streamed. A larger export is refused with a hint to narrow the dates.
+- **Verify chain:** runs the integrity check and shows per node: events checked, first and last time, and "intact" or the first broken event.
+- **Accessibility and size:** keyboard reachable filters and rows, the side panel as a dialog that returns focus, and at phone width the table becomes cards (time, event, user, outcome) with filters in a sheet.
+
+### Who can see it
+
+- Only `fdrop-admin`, and only from a two-factor session (`403 two-factor-required` otherwise), like every admin API. Standard users and application accounts get `403`. Admins see every event, their own included. There is no way to hide an event from other admins.
+- **Looking is recorded.** Opening the page, each search and each export write `audit.viewed`, `audit.searched` (with the query and filters, since this is admin activity, not user content) and `audit.exported` (with the filters and the number of events) as audit events themselves.
+- The audit index answers only the audit API; the file search API never reads it, and the audit API never reads the file index.
+
+### API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/admin/audit?q=&group=&event=&user=&ip=&outcome=&from=&to=&cursor=&limit=` | Events, newest first; with `q` or filters other than time, through the audit index; returns facet counts per group and outcome |
+| GET | `/api/v1/admin/audit/{id}` | One event with all its fields and its chain position |
+| GET | `/api/v1/admin/audit/export?format=jsonl\|csv&…` | The same selection, streamed as a download |
+| GET | `/api/v1/admin/audit/events` | Event names and groups seen, for the filter menus |
+| POST | `/api/v1/admin/audit/verify` | Check every node's chain; returns per-node results |
+| GET/POST | `/api/v1/admin/audit/index`, `/api/v1/admin/audit/index/rebuild` | This node's audit index status (events, lag); rebuild it |
+
+```json
+{
+  "total": 3,
+  "indexedUpTo": "2026-10-27T09:41:07.412Z",
+  "facets": { "group": { "Sign-in": 3 }, "outcome": { "refused": 2, "success": 1 } },
+  "nextCursor": "c2VxOjQ4MjE5",
+  "events": [
+    {
+      "id": "6f1c…", "seq": 48231, "ts": "2026-10-27T09:40:55.120Z", "node": "fdrop-1",
+      "event": "app.login", "group": "Sign-in", "user": "erp-export", "ip": "198.51.100.23",
+      "protocol": "HTTP", "outcome": "refused", "summary": "mTLS login refused: address not allowed"
+    }
+  ]
+}
+```
+
+### Metrics and alerts
+
+- `fdrop_audit_events_total{group}`, `fdrop_audit_write_failures_total`, `fdrop_audit_buffer_events` (waiting for the DB), `fdrop_audit_index_lag_seconds`, `fdrop_audit_queries_total{outcome}`, `fdrop_audit_query_seconds` and `fdrop_audit_chain_intact`.
+- `FdropAuditWriteFailing` (any write failure or a buffer over half full for 5 min, critical), `FdropAuditChainBroken` (any `audit.chain.broken`, critical), `FdropAuditIndexLag` (lag over 15 min, warning).
+
+### Metadata
+
+- `audit_event(seq BIGINT generated, id, ts, node, node_seq, prev_hash, hash, event, event_group, user_name, ip, protocol, outcome, summary, data TEXT)`, indexed on `ts`, `(node, node_seq)` (unique), `(user_name, ts)` and `(event, ts)`.
+- `audit_anchor(node, node_seq, hash, pruned_at)`: where each node's chain starts after pruning.
+- On each node, outside the DB: the audit index in `audit.indexDir`, its last applied `seq` in the commit data, and its wrapped index key.
 
 ## Authentication and authorisation
 
@@ -1125,6 +1238,7 @@ fdrop has three roles: **standard** (`fdrop-user`) works with files and creates 
 | List users, create users, delete users | No | Yes | No |
 | Create and manage application accounts and their credentials | No | Yes | No |
 | Reset another user's two-factor | No | Yes | No |
+| Read, search and export the audit log | No | Yes (two-factor session) | No |
 | Define forward destinations (server, directory, keys) and assign them to users | No | Yes | No |
 
 The admin role grants no access to other users' files: an admin sees only their own home and the folders they own or belong to.
@@ -1303,7 +1417,7 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 - Max file size `limits.maxFileSize` (default 100 GiB) enforced at upload create and on stream length.
 - Search never crosses access: every query is filtered to the caller's Home and folders, read from the DB per query, and every hit is checked again as the caller before it is returned; snippets are plain text; documents are parsed in a separate JVM with memory and time limits (see Search).
 - Encryption at rest: every stored file, upload part and spool file is encrypted with its own AES-256 key, wrapped by a key-encryption key held in an environment secret, AWS KMS or Vault, never in storage; segments are authenticated, so tampering or truncation fails the read instead of returning altered data (see Encryption at rest).
-- Audit log (JSON lines) of logins, uploads, downloads, deletes, moves and expiry (set, changed, cleared, refused, expired) with user, IP, protocol, path and bytes.
+- Audit log: every event is also kept in an append-only DB table, hash-chained per node so later edits show, readable and searchable only by admins with two factors, and every look at it is itself audited (see Audit log). It records logins, uploads, downloads, deletes, moves and expiry (set, changed, cleared, refused, expired) with user, IP, protocol, path and bytes.
 - File expiry is a hard deadline: an expired file is refused on every protocol before its bytes are deleted. The `.fdrop-expires` suffix is reserved for SFTP control files and cannot be used as a file name.
 
 ## Configuration
@@ -1391,6 +1505,12 @@ storage:
     allowPlaintextReads: false   # true only while migrating a store that holds unencrypted files
     reencrypt:
       bytesPerSecond: 50MiB  # per node
+audit:                       # see Audit log
+  retention: 400d            # events older than this are pruned from the DB (the log files follow logging config)
+  bufferSize: 10000          # events held while the DB is unreachable
+  indexDir: /var/lib/fdrop/audit-index   # separate from search.indexDir; encrypted with the storage KEK when encryption is on
+  exportMax: 100000
+  verifyInterval: 24h        # background chain check
 search:                      # see Search
   enabled: true
   indexDir: /var/lib/fdrop/search   # local disk on each node; encrypted with the storage KEK when encryption is on
@@ -1406,7 +1526,7 @@ search:                      # see Search
     forkHeap: 512m
     timeout: 60s
     maxFileSize: 100MiB      # larger files are found by name only
-    maxTextPerFile: 1MiB
+    maxTextPerFile: 20MiB
 upload:
   chunkSize: 8MiB
   ttl: 24h
@@ -1445,6 +1565,7 @@ limits:
 | SFTP | Apache MINA SSHD 2.x |
 | S3 | AWS SDK for Java v2 (async, CRT client) |
 | Encryption at rest | JDK `javax.crypto` (AES-256-GCM, HKDF and HMAC-SHA-256); AWS SDK v2 KMS client; Vault transit over `java.net.http` |
+| Audit log | The same Lucene 10 jars plus `lucene-facet` for group and outcome counts, and core's `InetAddressPoint` for IP and CIDR filters; in `fdrop-search` beside file search, with its own index |
 | Search | Apache Lucene 10 (core, analysis-common, queryparser) embedded; Apache Tika 3 (`tika-core` and the text, PDF, Microsoft, misc-office, HTML, mail and XML parser modules), run in a separate JVM for extraction |
 | Metadata | JDBC + Flyway migrations; H2 embedded or PostgreSQL |
 | Config | Jackson YAML + env overlay |
@@ -1756,6 +1877,13 @@ All fdrop metrics are prefixed `fdrop_`. Durations are histograms in seconds, si
 | `fdrop_search_index_lag_seconds` | gauge | — | Age of the oldest change this node has not applied |
 | `fdrop_search_extract_total` | counter | `result` (ok, unsupported, too_large, protected, timeout, failed) | Text extractions |
 | `fdrop_search_extract_seconds` | histogram | — | Time to extract one file's text |
+| `fdrop_audit_events_total` | counter | `group` | Audit events recorded |
+| `fdrop_audit_write_failures_total` | counter | — | Audit events that could not be written to the DB (still in the log file) |
+| `fdrop_audit_buffer_events` | gauge | — | Audit events waiting for the DB |
+| `fdrop_audit_index_lag_seconds` | gauge | — | Age of the newest audit event this node's audit index has not applied |
+| `fdrop_audit_queries_total` | counter | `outcome` (ok, invalid, error) | Audit log searches |
+| `fdrop_audit_query_seconds` | histogram | — | Audit log search time |
+| `fdrop_audit_chain_intact` | gauge | — | 1 when the last chain check found every node's chain intact, 0 when it found a broken link |
 
 Micrometer's standard JVM and process metrics (`jvm_memory_*`, `jvm_gc_*`, `jvm_threads_*`, `process_*`), Netty's pooled buffer memory, and the DB connection pool (`hikaricp_*`) are included too.
 
@@ -1791,6 +1919,9 @@ scrape_configs:
 | `FdropAppAuthFailures` | more than 20 application login failures in 5 min | warning |
 | `FdropAppCredentialExpiring` | any application password or certificate expiring within 7 days | warning |
 | `FdropUploadAssemblySlow` | 95th percentile assembly time over 5 min for 30 min | warning |
+| `FdropAuditWriteFailing` | any `fdrop_audit_write_failures_total` increase, or the buffer over half full for 5 min | critical |
+| `FdropAuditChainBroken` | `fdrop_audit_chain_intact` is 0: the last chain check found a broken link | critical |
+| `FdropAuditIndexLag` | `fdrop_audit_index_lag_seconds` over 15 min for 15 min | warning |
 | `FdropSearchIndexLag` | `fdrop_search_index_lag_seconds` over 15 min for 15 min | warning |
 | `FdropSearchExtractFailing` | `failed` and `timeout` above 20% of extractions over 1 h | warning |
 | `FdropDecryptionFailures` | any increase in `fdrop_encryption_failures_total`: stored data was altered or corrupted | critical |
@@ -1815,6 +1946,7 @@ scrape_configs:
 - My uploads tests: uploads over the browser and SFTP both appear with the right size and Folder or Forward badge; forward status follows the job; rows survive move, delete and forwarding; users never see other users' rows; filters, totals and paging are correct; retention removes old rows; the recorded IP is the real client's behind a trusted proxy, both for HTTP (`X-Forwarded-For`) and SFTP (PROXY protocol), and a forged `X-Forwarded-For` from an untrusted address is ignored.
 - Metrics tests: `/metrics` is served only on the management port and returns valid Prometheus and OpenMetrics output; the bearer token is enforced when set; every documented metric appears with its labels; no label value contains a test username, file name, path or hostname; `/readyz` reports degraded when Keycloak is stopped and 503 when the DB is; `promtool check rules` passes on `deploy/prometheus/alerts.yml`.
 - File expiry tests: the syntax cases file passes in `fdrop-core`, Vitest and `fdrop-cli`, including calendar months and years (31 January, 29 February) and every error message; with a fake clock, a file uploaded over HTTP (resumable and simple), the CLI and SFTP gets the right expiry from the upload, the folder default, the home default or the folder maximum, counted from completion; values over a maximum and in forward folders are refused before any bytes are sent; conflicting header and field are refused; `PATCH` extends, shortens and clears within limits and is refused for read-only members; moves into a folder with a shorter maximum shorten the expiry; `applyToExisting` changes only files over the new maximum; an expired file is hidden from HTTP and SFTP listings and opens at its expiry instant and an open download is cut off; SFTP control files before and after the upload, with WinSCP-style temporary names, read back and `rm`, a pending value that lapses, a bad value failing the close with its message, and the reserved suffix refused over HTTP; forward folder files expire N days after `SENT` and never before; deletion on the local backend and on MinIO with `DeleteObjects`, a storage error retried, two sweeping nodes on one PostgreSQL deleting each file once, a node killed mid-batch whose claims are taken over, and a server stopped past many expiries deleting them all at start; audit entries and metrics as documented.
+- Audit log tests: every existing `Audit.log` call lands in `audit_event` with the right group, outcome and summary, and its log line is unchanged; events survive a DB outage through the buffer and are counted when the buffer overflows; the chain verifies across restarts and two nodes, and an edited, deleted or reordered row is reported at the right event; pruning anchors the chain and verification still passes; the default view shows an event at once and searches find it after indexing; field syntax (`user:`, `ip:` with CIDR, `path:` prefixes, `outcome:`, dates) and free text return exactly the matching events; facets count the filtered set; the file search API never returns audit data and the audit API never returns file contents; standard users, application accounts and admins without two factors get `403`; viewing, searching and exporting are audited; exports stream JSON Lines identical to the log file and CSV, and refuse more than `audit.exportMax`; the audit index directory holds no plaintext username or IP from the fixtures when encryption is on; Playwright: filters, side panel, follow live and export at phone and desktop sizes, with an axe check.
 - Search tests: names and contents found for every supported type (fixtures for PDF, DOCX, XLSX, PPTX, ODT, RTF, HTML, EML, CSV, JSON and code); a user never finds, nor gets suggestions, counts or snippets from, another user's Home or a folder they are not in, including with crafted queries (`area:`, field names, wildcards, phrases); removing a member hides that folder's files on the very next search; folder rename and file move are found under the new name without re-extraction; expired files disappear at their expiry instant; deleted files disappear; a document with HTML or script in its text comes back as plain segments; `SimpleQueryParser` limits refuse oversize queries with `invalid-search`; a crashing or hanging parser (fixture that loops, a zip bomb) is killed by the time limit and the file stays findable by name; two nodes each build the same index from the feed, extracting each file once; a node killed mid-batch resumes from its committed position; a rebuild keeps answering until it swaps; the index directory contains no plaintext word from the fixtures when encryption is on; rate limit returns `429`; Playwright: suggestions while typing, Enter opens results, keyboard navigation and screen reader announcements, at phone, tablet and desktop sizes.
 - Encryption tests: published-format test vectors (fixed DEK and nonces) decrypt to known plaintext, and fdrop's own output for them matches byte for byte; round trips for sizes 0, 1, `S − 1`, `S`, `S + 1` and many segments; every ranged read of a 3-segment file, including ranges inside, across and at the ends of segments; a changed byte in a segment, in a tag or in the header, swapped segments, a dropped final segment, data after the final segment and a header from another object each fail with the right reason and return no plaintext; resumable uploads with chunks sent out of order, in parallel, twice and from two nodes; SFTP resume; the storage contract suite run through `EncryptingStorage` on the local backend and on LocalStack S3, with server-side `CompleteMultipartUpload`; plaintext and ciphertext sizes agree with the formula; KEK rotation keeps old objects readable; the re-encryption job across two nodes, resumed after a kill, and the plaintext migration; KMS against LocalStack's KMS and Vault transit against a Vault Testcontainer; no DEK or KEK appears in logs, audit entries or API responses; load test with encryption on keeps heap below 512 MiB and reports throughput per core.
 - Resumable upload tests: kill the connection mid-chunk, restart the server between chunks, duplicate and out-of-order chunks, wrong hash, expiry.
@@ -1836,7 +1968,8 @@ scrape_configs:
 10. **M10 File expiry:** expiry syntax in `fdrop-core`, `fdrop-web` and `fdrop-cli` with shared test cases, expiry on HTTP, CLI and SFTP uploads (folder defaults, SFTP control files), change and clear, folder and home defaults and maximums, the sweeper with claims across nodes for both backends, UI columns and dialogs, audit, metrics and alerts.
 11. **M11 Encryption at rest:** `EncryptingStorage` with the `fdrop-stream-v1` format and test vectors, `local`, `aws-kms` and `vault` key providers, resumable and SFTP paths, header and DEK caches, key rotation and the re-encryption job, plaintext migration, admin screen, audit, metrics and alerts.
 12. **M12 Search:** `fdrop-search` with the Lucene index per node, change feed and commit positions, Tika extraction in a forked JVM with shared text cache, access filtering and per-hit checks, `EncryptedDirectory`, the search box drop-down and results page, API, admin screen, rebuild, metrics and alerts.
-13. **M13 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
+13. **M13 Audit log:** batched, hash-chained `audit_event` store with buffer and retention, the separate encrypted Lucene audit index with facets, the Admin: Audit log page with search, filters, side panel, follow live, export and chain verification, API, metrics and alerts.
+14. **M14 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
 
 ## Open questions
 
@@ -1847,6 +1980,8 @@ scrape_configs:
 - Should a forward folder ever forward to more than one destination, or pull files back from a remote server?
 - Should fdrop warn uploaders before their files expire (in the UI, or by an alert or email), and should the folder owner be able to see who set each expiry?
 - Should lowering a folder's maximum shorten existing files' expiries by default, rather than only when the owner ticks "Also shorten"?
+- Should the audit log also be streamed to an external write-once store (S3 Object Lock, a SIEM) by fdrop itself, rather than by log shipping?
+- Should admins be able to see a user's activity only with a stated reason (a "break-glass" note recorded with the view)?
 - Should search add OCR for images and scanned PDFs (Tesseract through Tika), and look inside archives?
 - Should search use a shared index service (OpenSearch) instead of an index per node once there are many nodes or a very large store?
 - Should storage keys (folder and file names) be hidden too, by storing objects under opaque ids and keeping names only in the metadata DB, at the cost of the storage no longer being readable on its own?

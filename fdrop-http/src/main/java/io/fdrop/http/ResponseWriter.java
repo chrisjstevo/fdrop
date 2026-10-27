@@ -64,11 +64,17 @@ final class ResponseWriter {
     private ChannelFuture stream(Channel ch, HttpResponseStatus status, HttpHeaders h, Response.Stream s) {
         DefaultHttpResponse head = new DefaultHttpResponse(HttpVersion.HTTP_1_1, status);
         head.headers().set(h);
-        head.headers().set(HttpHeaderNames.CONTENT_LENGTH, s.length());
+        // a length below 0 means not known up front (an export): sent chunked until the source ends
+        boolean unknown = s.length() < 0;
+        if (unknown) {
+            io.netty.handler.codec.http.HttpUtil.setTransferEncodingChunked(head, true);
+        } else {
+            head.headers().set(HttpHeaderNames.CONTENT_LENGTH, s.length());
+        }
         ch.write(head);
         long sent = 0;
         try (var body = s.body()) {
-            boolean zeroCopy = s.fileChannel() != null && ch.pipeline().get(SslHandler.class) == null;
+            boolean zeroCopy = !unknown && s.fileChannel() != null && ch.pipeline().get(SslHandler.class) == null;
             if (zeroCopy) {
                 ch.write(new DefaultFileRegion(s.fileChannel(), s.fileOffset(), s.length()));
                 sent = s.length();
@@ -78,8 +84,8 @@ final class ResponseWriter {
                 return last;
             }
             ChannelFuture last = null;
-            while (sent < s.length()) {
-                ByteBuf buf = ch.alloc().buffer((int) Math.min(CHUNK, s.length() - sent));
+            while (unknown || sent < s.length()) {
+                ByteBuf buf = ch.alloc().buffer(unknown ? CHUNK : (int) Math.min(CHUNK, s.length() - sent));
                 ByteBuffer nio = buf.nioBuffer(0, buf.capacity());
                 int n;
                 try {
@@ -102,7 +108,7 @@ final class ResponseWriter {
                     break;
                 }
             }
-            if (sent < s.length()) {
+            if (!unknown && sent < s.length()) {
                 // the source ended early: the client must not take a short body as complete
                 ch.close();
                 return ch.newSucceededFuture();

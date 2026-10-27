@@ -23,6 +23,7 @@ public class FdropConfig {
     public Upload upload = new Upload();
     public FileExpiry expiry = new FileExpiry();
     public Search search = new Search();
+    public AuditLog audit = new AuditLog();
     public Db db = new Db();
     public Limits limits = new Limits();
 
@@ -222,6 +223,20 @@ public class FdropConfig {
         public DataSize clientHashMax = DataSize.ofGiB(2);
     }
 
+    /** The audit log kept in the DB and searchable by admins (see "Audit log" in SPEC.md). */
+    public static class AuditLog {
+        /** Events older than this are pruned from the DB; the log files follow logging config. */
+        public String retention = "400d";
+        /** Events held while the DB is unreachable; beyond it they are only in the log file. */
+        public int bufferSize = 10_000;
+        /** This node's name in the audit chain; defaults to the host name. Must be unique per running node. */
+        public String node;
+        /** Separate from search.indexDir; encrypted with the storage KEK when encryption is on. */
+        public String indexDir = "./data/audit-index";
+        public int exportMax = 100_000;
+        public String verifyInterval = "24h";
+    }
+
     /** Full-text search (see "Search" in SPEC.md). Needs the fdrop-search module on the classpath. */
     public static class Search {
         public boolean enabled = true;
@@ -243,7 +258,8 @@ public class FdropConfig {
         public String forkHeap = "512m";
         public String timeout = "60s";
         public DataSize maxFileSize = DataSize.ofMiB(100);
-        public DataSize maxTextPerFile = DataSize.ofMiB(1);
+        /** Characters of text taken from each file; the rest is not searchable by its contents. */
+        public DataSize maxTextPerFile = DataSize.ofMiB(20);
     }
 
     /** File expiry (see "File expiry" in SPEC.md). {@code max} and {@code home.*} use the expiry syntax. */

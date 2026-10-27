@@ -96,7 +96,14 @@ search:                      # full-text search, see SPEC.md
     forkHeap: 512m
     timeout: 60s
     maxFileSize: 100MiB      # larger files are found by name only
-    maxTextPerFile: 1MiB
+    maxTextPerFile: 20MiB
+audit:                       # the audit log in the DB and the Admin: Audit log page, see SPEC.md
+  retention: 400d            # older events are pruned nightly; the chain keeps verifying from the prune point
+  bufferSize: 10000          # events waiting while the DB is unreachable; beyond that they are only in the log file
+  node: null                 # this node's name in the audit chain; null = the host name (must be unique and stable)
+  indexDir: /var/lib/fdrop/audit-index   # local disk on each node, never inside search.indexDir
+  exportMax: 100000          # largest export
+  verifyInterval: 24h        # background check of every node's chain
 upload:
   chunkSize: 8MiB
   ttl: 24h

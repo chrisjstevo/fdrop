@@ -8,6 +8,7 @@ import { formatBytes } from "../util/format";
 import { FolderActionsProvider, useFolderActions } from "./FolderActions";
 import {
   AppIcon,
+  AuditIcon,
   CloseIcon,
   FolderIcon,
   ForwardIcon,
@@ -47,6 +48,7 @@ const NAV: NavItem[] = [
   { to: "/admin/destinations", label: "Destinations", icon: <ServerIcon />, admin: true },
   { to: "/admin/encryption", label: "Encryption", icon: <LockIcon />, admin: true },
   { to: "/admin/search", label: "Search index", icon: <ListIcon />, admin: true },
+  { to: "/admin/audit", label: "Audit log", icon: <AuditIcon />, admin: true },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

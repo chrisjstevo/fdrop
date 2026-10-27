@@ -1,5 +1,7 @@
 target/
 data/
+# generated sample files for trying uploads and search (about 31 MB)
+sample-data/
 node_modules/
 *.iml
 .idea/

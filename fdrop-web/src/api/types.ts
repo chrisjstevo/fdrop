@@ -376,3 +376,58 @@ export interface SearchIndexStatus {
   extract: Record<string, number>;
   rebuilding: boolean;
 }
+
+export type AuditOutcome = "success" | "failure" | "refused";
+
+export interface AuditEventRow {
+  id: string;
+  seq: number;
+  ts: string;
+  node: string;
+  event: string;
+  group: string;
+  user: string | null;
+  ip: string | null;
+  protocol: string | null;
+  outcome: AuditOutcome;
+  summary: string;
+}
+
+export interface AuditEventDetail extends AuditEventRow {
+  data: Record<string, unknown>;
+  chain: { node: string; nodeSeq: number; prevHash: string; hash: string };
+}
+
+export interface AuditPage {
+  total: number;
+  indexedUpTo: string | null;
+  facets: { group?: Record<string, number>; outcome?: Record<string, number> };
+  nextCursor: string | null;
+  events: AuditEventRow[];
+}
+
+export interface AuditEventName {
+  event: string;
+  group: string;
+  count: number;
+}
+
+export interface AuditChainCheck {
+  node: string;
+  checked: number;
+  first: string | null;
+  last: string | null;
+  intact: boolean;
+  brokenAt: number | null;
+  reason: string | null;
+}
+
+export interface AuditIndexStatus {
+  available: boolean;
+  documents: number;
+  sizeBytes: number;
+  appliedSeq: number;
+  latestSeq: number;
+  lagSeconds: number;
+  rebuilding: boolean;
+}

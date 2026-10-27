@@ -26,7 +26,7 @@ public sealed interface Response {
     }
 
     /**
-     * A streamed body of known length, read on the handler's virtual thread. {@code fileChannel} is set when the
+     * A streamed body of known length ({@code length < 0}: unknown, sent chunked), read on the handler's virtual thread. {@code fileChannel} is set when the
      * bytes come straight from a local file, allowing a zero-copy send.
      */
     record Stream(int status, long length, ReadableByteChannel body, FileChannel fileChannel, long fileOffset,

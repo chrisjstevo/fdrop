@@ -30,6 +30,11 @@
       <groupId>org.apache.lucene</groupId>
       <artifactId>lucene-queryparser</artifactId>
     </dependency>
+    <!-- facet counts for the audit index's group and outcome chips -->
+    <dependency>
+      <groupId>org.apache.lucene</groupId>
+      <artifactId>lucene-facet</artifactId>
+    </dependency>
     <!-- Tika: only the parsers for the formats search reads (see SPEC.md, Search) -->
     <dependency>
       <groupId>org.apache.tika</groupId>

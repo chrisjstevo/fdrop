@@ -52,8 +52,10 @@ final class TextStore {
         this.node = node;
     }
 
-    static String version(ObjectInfo o) {
-        return o.etag() + "|" + o.size() + "|" + (o.lastModified() == null ? 0 : o.lastModified().toEpochMilli());
+    /** A file version and the text limit it was read with: changing the limit reads every file again. */
+    String version(ObjectInfo o) {
+        return o.etag() + "|" + o.size() + "|" + (o.lastModified() == null ? 0 : o.lastModified().toEpochMilli())
+                + "|" + cfg.maxTextPerFile.bytes();
     }
 
     private static String textKey(String key, String version) {

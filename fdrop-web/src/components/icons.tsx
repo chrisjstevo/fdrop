@@ -58,6 +58,13 @@ export const ListIcon = ({ size }: P) => (
   </Svg>
 );
 
+/** A clipboard with lines: the audit log. */
+export const AuditIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M9 4h6v3H9zM9 5.5H6a1 1 0 0 0-1 1V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1h-3M8.5 12h7M8.5 16h5" />
+  </Svg>
+);
+
 export const SettingsIcon = ({ size }: P) => (
   <Svg size={size}>
     <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />

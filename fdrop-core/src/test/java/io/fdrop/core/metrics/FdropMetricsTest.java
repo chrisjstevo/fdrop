@@ -48,6 +48,12 @@ class FdropMetricsTest {
         m.searchQuery("ok", 1000);
         m.searchIndex(10, 1.5);
         m.searchExtract("ok", 1000);
+        m.auditEvent("Files");
+        m.auditWriteFailure();
+        m.auditBuffer(3);
+        m.auditIndexLag(1.0);
+        m.auditQuery("ok", 1000);
+        m.auditChainIntact(true);
         m.update(new FdropMetrics.Snapshot(Map.of("user", 3L, "application", 1L), 1000, Map.of("shared", 1L), Map.of("OPEN", 2L),
                 Map.of(List.of("QUEUED", "dst_1"), 1L)));
 
@@ -81,7 +87,10 @@ class FdropMetricsTest {
                 "fdrop_encryption_plaintext_reads_total", "fdrop_encryption_kek_seconds",
                 "fdrop_encryption_dek_cache_total", "fdrop_encryption_objects", "fdrop_encryption_reencrypt_objects",
                 "fdrop_search_queries_total", "fdrop_search_query_seconds", "fdrop_search_documents",
-                "fdrop_search_index_lag_seconds", "fdrop_search_extract_total", "fdrop_search_extract_seconds");
+                "fdrop_search_index_lag_seconds", "fdrop_search_extract_total", "fdrop_search_extract_seconds",
+                "fdrop_audit_events_total", "fdrop_audit_write_failures_total", "fdrop_audit_buffer_events",
+                "fdrop_audit_index_lag_seconds", "fdrop_audit_queries_total", "fdrop_audit_query_seconds",
+                "fdrop_audit_chain_intact");
         assertThat(m.scrape("application/openmetrics-text")).contains("# EOF");
     }
 }
