@@ -1407,10 +1407,22 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 - **Integration tests** (Failsafe, `*IT.java`): fdrop's HTTP server with the mTLS listener in the test JVM, using the test identity provider of the server's own tests (no Keycloak), and an application account with a pinned certificate. The CLI uploads into `/home`, a shared folder where it is a read-write member, and a forward folder, whose forward job is then queued; it is refused (exit code 4) in a read-only folder and one it is not a member of; an existing file gives exit code 3 without `--overwrite`; an unregistered certificate and a disabled account give exit code 2. A 40 MiB file goes through a test TCP proxy that cuts the connection three times mid-transfer and arrives with the right SHA-256; and a run whose server becomes unreachable mid-upload gives up, then the next run resumes without re-sending the chunks that arrived.
 - **End-to-end test:** the shaded jar is run as a separate process with `java -jar` against the same kind of server, checking `--version`, `whoami --json`, `upload --json`, an existing file's exit code 3 with its message on stderr, and a usage error.
 
+## Java client library (fdrop-http-client-java)
+
+`fdrop-http-client-java` is a Maven module with a Java client for the REST API, for applications that move files through fdrop. It depends only on the JDK's `HttpClient` and Jackson, not on any server module.
+
+- **Interface.** `FdropClient` covers the API for standard users and application accounts: the account (`me`, upload history), files (list, upload, download, mkdir, move, delete, set and clear expiry), search, folders (create shared and forward folders, members, forward jobs and retries) and the caller's forward destinations. Admin endpoints are not included. Responses are typed records that ignore fields they do not know, so a newer server does not break an older client.
+- **Uploads look like one call.** `upload(Path, remotePath, options)` and `upload(InputStream, size, remotePath, options)` use the resumable protocol underneath: create the session, read the source one chunk at a time in the server's chunk size, send up to `parallelChunks` (default 3) at once, each with its `X-Chunk-SHA256`, and complete with the whole file's SHA-256, polling while a `202` assembly runs. A `409` on a chunk is checked against the session status before trying again. Any failure discards the session (`DELETE`), so nothing partial is left; a later call starts a new upload rather than resuming.
+- **Retries.** Every request is tried up to `maxAttempts` times (default 5; per chunk for uploads) with exponential backoff and jitter, 1 s doubling to 60 s, honouring `Retry-After`. Connection failures, `429` and `503` are always retried; other network errors, timeouts, `500`, `502` and `504` only for requests that are safe to repeat (reads, chunk `PUT`s, `complete`, which the server treats as idempotent, deletes and `PATCH`/`PUT` settings). `mkdir`, `move` and folder creation are not repeated after the request may have reached the server. Creating an upload session is repeated, since an unused session expires on its own. When the tries run out the call throws `FdropRetriesExhaustedException`, carrying the number of attempts and the last failure. A TLS handshake refused for a certificate fails at once.
+- **Errors.** Every failure is an unchecked `FdropClientException`. `FdropApiException` carries the HTTP status and fdrop's RFC 9457 problem type, title and detail.
+- **Authentication.** A bearer token supplier (asked before each request, so the caller can refresh it), HTTP Basic for application accounts (refused over plain HTTP), or a client certificate on the mTLS port (`clientCertificate(cert, key, ca)` from PEM files, PKCS#8 key, or any `SSLContext`). `http://` URLs are refused unless `allowPlainHttp` is set, which is for tests.
+- **Tests.** Unit tests of the retry rules without sleeping, and tests against a real fdrop HTTP server in the test JVM: multi-chunk uploads from a file and a stream, an empty file, download and comparison, refusals as `FdropApiException`, files and folders, an application account's certificate login on the mTLS port, every chunk's first try cut off and sent again, and a chunk that always fails giving up after `maxAttempts` with its session discarded.
+
 ## Security
 
 - TLS 1.2+ on HTTP when `http.tls.enabled` (PEM cert + key, hot reload on file change); HSTS when on.
 - The application mTLS listener uses the same server certificate, accepts TLS 1.2+ only, requires a client certificate, and serves nothing but `/api/v1`. HTTP Basic is refused on plain HTTP unless a trusted proxy terminated TLS.
+- Metadata DB: PostgreSQL only over TLS with mutual certificate authentication (`verify-full` on fdrop's side, `hostssl … cert` on the server's); no DB password in production and fdrop refuses to start without the certificates (see Metadata DB connection).
 - Path traversal: every path is normalised and checked in one place (`StoragePath.of`) before reaching any backend; names with NUL, `/` inside a segment, or longer than 255 bytes are rejected.
 - Downloads always send `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` so uploaded HTML cannot execute in the app's origin.
 - Content-Security-Policy `default-src 'self'` on the UI.
@@ -1546,19 +1558,36 @@ expiry:
     suffix: .fdrop-expires # control file suffix; reserved on every protocol
     pendingFor: 10m        # how long a control file written before its file is kept
 db:
-  url: jdbc:h2:file:/var/lib/fdrop/meta   # or jdbc:postgresql://…
+  url: jdbc:postgresql://db.example.com:5432/fdrop   # or jdbc:h2:file:/var/lib/fdrop/meta for a single node
+  username: fdrop           # must match the client certificate's CN (or its pg_ident.conf mapping)
+  password: null            # not used with client certificates
+  tls:
+    mode: verify-full       # verify-full (default for PostgreSQL) | disable (explicit opt-out, logged as a warning)
+    ca: /etc/fdrop/db/ca.crt          # PEM: the CA that signed the DB server's certificate
+    cert: /etc/fdrop/db/client.crt    # PEM: fdrop's client certificate
+    key: /etc/fdrop/db/client.key     # PEM, PKCS#8 (BEGIN PRIVATE KEY): its private key
 limits:
   maxFileSize: 100GiB
   defaultQuota: 50GiB
   defaultAppQuota: 10GiB
 ```
 
+### Metadata DB connection
+
+In production the metadata DB is PostgreSQL, and fdrop reaches it only over TLS with mutual authentication: the server proves itself with a certificate fdrop checks, and fdrop proves itself with a client certificate instead of a password. The dev container connects the same way (see Dev container), so a misconfigured certificate, CA or `pg_hba.conf` shows up while developing, not at the first deploy.
+
+- **fdrop's side.** With a `jdbc:postgresql:` URL, `db.tls.mode` defaults to `verify-full`: the server's certificate must chain to `db.tls.ca` and name the URL's host in its SAN. fdrop presents `db.tls.cert` and `db.tls.key`. The three files are PEM, like `http.tls`, so one set of tooling issues every certificate; the key must be unencrypted PKCS#8 (`BEGIN PRIVATE KEY`), and a traditional `EC`/`RSA PRIVATE KEY` is refused with the `openssl pkcs8 -topk8` command that converts it. pgJDBC cannot read PEM keys, so fdrop passes its own `sslfactory` (`io.fdrop.core.db.PemSslFactory`) that builds the TLS context from the files, with TLS 1.2 as the minimum and TLS 1.3 preferred; any `ssl*` parameters in `db.url` are refused at startup so there is one place to configure it.
+- **Refusing to run without it.** fdrop will not start with a PostgreSQL URL and no `db.tls.ca`, `cert` and `key`, or with files it cannot read or a key that does not match the certificate; the message names the setting. `db.tls.mode: disable` is the only way to connect without TLS, and logs a warning at every start. `db.password` may be left set for a server that asks for both (`cert` plus `scram-sha-256`); with `verify-full` it only ever travels inside TLS. With H2 the `db.tls` settings are ignored.
+- **Rotation.** The files are read for every new connection, and Hikari's `maxLifetime` (30 min) retires old ones, so a renewed certificate is used within 30 minutes without a restart. Renew before the old one expires: `fdrop_db_client_cert_expiry_seconds` reports how long the current one has left and `FdropDbClientCertExpiring` warns 14 days ahead.
+- **The server's side** (operated by the DBA, not fdrop; the dev container's files are the reference): `ssl = on`, `ssl_min_protocol_version = 'TLSv1.2'`, `ssl_ca_file` set to the CA that issues client certificates, and a `pg_hba.conf` with only `hostssl … cert` lines for fdrop's user, so plain TCP and password-only logins are refused. With `cert`, the certificate's CN must equal the DB user name (`fdrop`), or be mapped to it in `pg_ident.conf`. The migration's suggested maintenance role (Audit log) authenticates the same way with its own certificate.
+- **Readiness.** A failed handshake (expired or revoked certificate, wrong CA, wrong host name) makes `/readyz` return 503 like any DB outage; the log line says which side refused and why, without printing key material.
+
 ## Tech stack and packaging
 
 | Area | Choice |
 | --- | --- |
 | Language / runtime | Java 21 (virtual threads for the storage I/O executor) |
-| Build | Apache Maven 3.9 multi-module reactor: `fdrop-core` (SPI, auth, metadata), `fdrop-storage-local`, `fdrop-storage-s3`, `fdrop-http`, `fdrop-sftp`, `fdrop-web` (UI), `fdrop-search` (Lucene index and Tika extraction), `fdrop-server` (main), `fdrop-cli` (command line client) |
+| Build | Apache Maven 3.9 multi-module reactor: `fdrop-core` (SPI, auth, metadata), `fdrop-storage-local`, `fdrop-storage-s3`, `fdrop-http`, `fdrop-sftp`, `fdrop-web` (UI), `fdrop-search` (Lucene index and Tika extraction), `fdrop-server` (main), `fdrop-cli` (command line client), `fdrop-http-client-java` (Java client library) |
 | Web UI | React 19 + TypeScript responsive web app styled after lme.com, built with npm (Vite bundler, Vitest tests, CSS Modules, Radix UI, Nunito Sans) |
 | Identity | Keycloak 26 over OpenID Connect; Nimbus OAuth 2.0 SDK + `nimbus-jose-jwt` in fdrop |
 | HTTP | Netty 4.2 |
@@ -1589,21 +1618,21 @@ Maven is the top-level build for the whole project; npm builds the React UI and 
 
 The repo ships `.devcontainer/devcontainer.json` so the project builds and tests identically in VS Code or any Dev Containers client, with nothing installed on the host but Podman 5 and `podman-compose`. Docker is not required or used anywhere.
 
-The dev container is Compose based and runs under Podman, so Keycloak runs beside the workspace container. Files live in `.devcontainer/`: `devcontainer.json`, `compose.yaml`, `fdrop.dev.yaml`, `keycloak/fdrop-realm.json` and the development certificates in `mtls/`. (`dockerComposeFile` below is the Dev Containers spec's own property name; Podman reads the same file.)
+The dev container is Compose based and runs under Podman, so Keycloak and PostgreSQL run beside the workspace container. Files live in `.devcontainer/`: `devcontainer.json`, `compose.yaml`, `fdrop.dev.yaml`, `keycloak/fdrop-realm.json`, `postgres/` (the server's `pg_hba.conf` and TLS settings) and the generated development certificates in `certs/`. (`dockerComposeFile` below is the Dev Containers spec's own property name; Podman reads the same file.)
 
 ```json
 {
   "name": "fdrop",
   "dockerComposeFile": "compose.yaml",
   "service": "dev",
-  "runServices": ["certs", "localhost", "dev", "keycloak", "sftp-target", "prometheus"],
+  "runServices": ["certs", "localhost", "dev", "keycloak", "postgres", "sftp-target", "prometheus"],
   "workspaceFolder": "/workspaces/fdrop",
   "features": {
     "ghcr.io/devcontainers/features/java:1": { "version": "none", "installMaven": "true", "mavenVersion": "3.9" },
     "ghcr.io/devcontainers/features/node:1": { "version": "22" },
     "ghcr.io/devcontainers/features/aws-cli:1": {}
   },
-  "forwardPorts": [8443, 8081, 8444, 2222, 5173, 8180, 9090, 9000, 9001],
+  "forwardPorts": [8443, 8081, 8444, 2222, 5173, 8180, 5432, 9090, 9000, 9001],
   "portsAttributes": {
     "8443": { "label": "fdrop HTTPS", "protocol": "https" },
     "8081": { "label": "fdrop management (metrics)" },
@@ -1611,6 +1640,7 @@ The dev container is Compose based and runs under Podman, so Keycloak runs besid
     "2222": { "label": "fdrop SFTP" },
     "5173": { "label": "Vite dev server", "protocol": "https" },
     "8180": { "label": "Keycloak" },
+    "5432": { "label": "PostgreSQL (TLS + client certificate)" },
     "9090": { "label": "Prometheus" },
     "9000": { "label": "MinIO API" },
     "9001": { "label": "MinIO console" }
@@ -1623,7 +1653,7 @@ The dev container is Compose based and runs under Podman, so Keycloak runs besid
     "FDROP_LOG_FORMAT": "PLAIN"
   },
   "updateRemoteUserUID": false,
-  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && sudo apt-get install -y -q postgresql-client && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -1668,6 +1698,27 @@ services:
       - /sys:/sys:ro                 # keep-id can't mount sysfs in localhost's network namespace (another user namespace)
     depends_on:
       certs: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+  postgres:                          # the metadata DB, reached only over TLS with a client certificate, as in production
+    image: docker.io/library/postgres:17-alpine
+    network_mode: service:localhost  # listens on localhost:5432, matching the server certificate's SAN
+    environment:
+      POSTGRES_USER: fdrop           # the DB user; equals the CN of fdrop's client certificate
+      POSTGRES_DB: fdrop
+      POSTGRES_HOST_AUTH_METHOD: trust   # only for initdb's local socket; pg_hba.conf below has no other trust line
+    # Postgres refuses a world-readable key, so the dev keys are copied in with postgres-only permissions first
+    entrypoint: ["sh", "-c", "install -d -o postgres -m 700 /var/lib/postgresql/tls && install -o postgres -m 600 /etc/fdrop/certs/postgres.key /var/lib/postgresql/tls/server.key && install -o postgres -m 644 /etc/fdrop/certs/postgres.crt /etc/fdrop/certs/ca.crt /var/lib/postgresql/tls/ && exec docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - fdrop-pgdata:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro,z
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro,z
+      - ./certs:/etc/fdrop/certs:ro,z
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "/var/run/postgresql", "-U", "fdrop"]
+      interval: 2s
+      retries: 30
+    depends_on:
+      certs: { condition: service_completed_successfully }
   keycloak:
     image: quay.io/keycloak/keycloak:26.4
     command: ["start-dev", "--import-realm", "--http-port=8180"]
@@ -1696,6 +1747,7 @@ services:
       - ./sftp-target:/home/target/.ssh/keys:ro,z   # every file is a key; README.pub keeps the folder non-empty
 volumes:
   fdrop-m2:
+  fdrop-pgdata:                      # the dev metadata DB, kept across container rebuilds
 ```
 
 ### Dev realm
@@ -1790,11 +1842,17 @@ volumes:
 
 - **Host setup.** Install Podman 5 and `podman-compose`. On macOS and Windows, create a rootful Podman machine (`podman machine init --rootful`, then `podman machine start`); on Linux, enable the API socket with `systemctl --user enable --now podman.socket`. For IntelliJ, also install Docker Compose v2 (Ubuntu: `docker-compose-v2`, without `docker.io`), which `podman compose` then prefers: IntelliJ adds its own long-syntax bind mount at the workspace folder, and only Docker Compose merges it with the compose file's mount (podman-compose passes both, and Podman rejects the duplicate mount destination). On rootless Linux, set `PODMAN_SOCKET` where the IDE will see it, such as `~/.config/environment.d/` (then log in again), and keep it out of `podman.service` with a drop-in containing `UnsetEnvironment=PODMAN_SOCKET`: Podman reads that variable as its API endpoint and won't start with a plain path.
 - **VS Code.** Set `dev.containers.dockerPath` to `podman` and `dev.containers.dockerComposePath` to `podman-compose` in user settings, so Dev Containers drives Podman. These are user settings, not committed to the repo.
-- **Testcontainers.** The integration tests start MinIO, LocalStack, OpenSSH and Keycloak through the host's Podman API socket, mounted into the dev container as `/var/run/docker.sock`; Podman serves the Docker-compatible API there, so Testcontainers needs no Docker. `PODMAN_SOCKET` defaults to `/run/podman/podman.sock` (right for a rootful Podman machine); on rootless Linux set it to `$XDG_RUNTIME_DIR/podman/podman.sock`. Ryuk, Testcontainers' clean-up container, runs privileged so it can reach the socket. The containers a test starts run beside the dev container, not inside it, so their published ports are on the host: `TESTCONTAINERS_HOST_OVERRIDE=host.containers.internal` (the name Podman gives the host inside its containers) makes Testcontainers connect there instead of to the dev container's own `localhost`, where nothing listens and every such test used to be skipped.
+- **Testcontainers.** The integration tests start MinIO, LocalStack, OpenSSH, Keycloak and PostgreSQL through the host's Podman API socket, mounted into the dev container as `/var/run/docker.sock`; Podman serves the Docker-compatible API there, so Testcontainers needs no Docker. `PODMAN_SOCKET` defaults to `/run/podman/podman.sock` (right for a rootful Podman machine); on rootless Linux set it to `$XDG_RUNTIME_DIR/podman/podman.sock`. Ryuk, Testcontainers' clean-up container, runs privileged so it can reach the socket. The containers a test starts run beside the dev container, not inside it, so their published ports are on the host: `TESTCONTAINERS_HOST_OVERRIDE=host.containers.internal` (the name Podman gives the host inside its containers) makes Testcontainers connect there instead of to the dev container's own `localhost`, where nothing listens and every such test used to be skipped.
 - **Rootless and SELinux.** `userns_mode: keep-id` keeps workspace files owned by the host user, so `updateRemoteUserUID` is off; bind mounts carry `:z` so they work on SELinux hosts such as Fedora and RHEL, and the label is ignored elsewhere.
 - **Image names** are fully qualified (`docker.io/atmoz/sftp`, `quay.io/keycloak/keycloak`), because Podman does not assume Docker Hub for short names.
 - Prometheus runs beside the dev container at `http://localhost:9090`, scraping `localhost:8081/metrics` every 15 s with the same alert rules as production (`deploy/prometheus/alerts.yml`), so new metrics and alerts can be tried locally. The dev config sets no metrics token.
 - The named `.m2` volume keeps the Maven cache across container rebuilds.
+- **PostgreSQL over mTLS.** The dev config's metadata DB is the `postgres` service, connected exactly as production is (see Metadata DB connection): `db.url: jdbc:postgresql://localhost:5432/fdrop`, `db.username: fdrop`, no password, and `db.tls` pointing at `.devcontainer/certs/ca.crt`, `fdrop-db.crt` and `fdrop-db.key`. The server's settings are in `.devcontainer/postgres/`:
+  - `postgresql.conf`: `listen_addresses = 'localhost'`, `ssl = on`, `ssl_cert_file`, `ssl_key_file` and `ssl_ca_file` under `/var/lib/postgresql/tls/`, `ssl_min_protocol_version = 'TLSv1.2'`, `hba_file = '/etc/postgresql/pg_hba.conf'`.
+  - `pg_hba.conf`: `local all all trust` (for `initdb` and `podman exec … psql` inside the container) and `hostssl all all 127.0.0.1/32 cert` and `hostssl all all ::1/128 cert`; there is no `host` line, so a plain TCP or password-only connection is refused, as it should be in production.
+  - Developers query it from the dev container with `psql "host=localhost dbname=fdrop user=fdrop sslmode=verify-full sslrootcert=.devcontainer/certs/ca.crt sslcert=.devcontainer/certs/fdrop-db.crt sslkey=.devcontainer/certs/fdrop-db.key"` (`postCreateCommand` installs `postgresql-client`), or with `podman exec -it devcontainer-postgres-1 psql -U fdrop` over the local socket. Host tools such as DBeaver use the forwarded port 5432 with the same three files.
+  - The data lives in the `fdrop-pgdata` volume; `podman volume rm devcontainer_fdrop-pgdata` starts it empty. Existing H2 data in `data/meta` is not migrated: after switching, delete `data/` too so stored files and metadata start empty together.
+  - Unit tests keep using in-memory H2 for speed; nothing in `./mvnw verify` depends on this service. PostgreSQL integration tests start their own server through Testcontainers (see Testing).
 - Node 22 and npm are installed so developers can run `npm run dev` and `npm test` in `fdrop-web` directly; the Maven build still pins its own Node and npm through `frontend-maven-plugin`, and both must use the same major version.
 - The dev container, Keycloak and Prometheus share one network namespace, owned by the `localhost` service (a pause container), so `http://localhost:8180/realms/fdrop` is the same issuer for the browser (through the forwarded port) and for the fdrop server. Without this, tokens issued to the browser would fail the server's `iss` check. The namespace belongs to `localhost` rather than `dev` because Podman refuses to remove a container others share: with it, the dev container can be recreated (IntelliJ IDEA does so each time it opens the project) without touching the services beside it.
 - **IntelliJ IDEA** opens the same `devcontainer.json`. Set its Docker connection to Podman, with the Podman machine's rootful connection (`podman-machine-default-root`) on macOS and Windows so the images it builds and the containers `docker-compose` starts share one store, and Docker Compose to a `docker-compose` v2 binary.
@@ -1807,7 +1865,7 @@ volumes:
 - `sftp-target` is a throwaway SFTP server that accepts public-key login only (user `target`, directory `inbox`), reachable from the dev container as `sftp-target:22`. After creating a destination for it in the admin UI, the developer pastes fdrop's public key into the git-ignored `.devcontainer/sftp-target/authorized_keys` and recreates `sftp-target`. The whole `.devcontainer/sftp-target/` folder is mounted as the image's keys folder, where every file is a key; a committed comment-only `README.pub` keeps it non-empty, since a missing single-file mount becomes an empty directory under Docker-compatible engines and the image cannot start with one. The dev config sets `forward.allowedHosts: [sftp-target]` and a fixed dev `forward.encryptionKey`.
 - These credentials and client secrets are for development only. The realm file stays under `.devcontainer/` and is never packaged into the jar or image; fdrop logs a startup warning if a client secret ends in `-dev-secret`.
 - Keycloak runs in `start-dev` mode with its own throwaway database, so changes made in its console are lost when the container is recreated; durable changes go into `fdrop-realm.json`.
-- **HTTPS only.** The dev config serves the web app and API on https://localhost:8443 and nothing on plain HTTP. A one-shot `certs` service, which Keycloak and the dev container wait for, runs `scripts/dev-certs.sh` (OpenSSL in an Alpine container) to create, in the git-ignored `.devcontainer/certs/`, a dev CA, a `localhost` server certificate for fdrop's HTTPS and mTLS ports and the Vite dev server, and an `app-demo` client certificate. Existing files are kept until a week before they expire. Keycloak stays on plain HTTP at `localhost:8180` and trusts the dev CA (`KC_TRUSTSTORE_PATHS`) for its back-channel logout calls to fdrop. The demo stack in `deploy/compose/` does the same into `deploy/compose/certs/`. These keys are for development only.
+- **HTTPS only.** The dev config serves the web app and API on https://localhost:8443 and nothing on plain HTTP. A one-shot `certs` service, which Keycloak and the dev container wait for, runs `scripts/dev-certs.sh` (OpenSSL in an Alpine container) to create, in the git-ignored `.devcontainer/certs/`, a dev CA, a `localhost` server certificate for fdrop's HTTPS and mTLS ports and the Vite dev server, an `app-demo` client certificate, a `postgres` server certificate (SAN `DNS:localhost`, `IP:127.0.0.1`, `IP:::1`, `serverAuth`) and an `fdrop-db` client certificate with `CN=fdrop` (`clientAuth`), whose key is written in PKCS#8. One CA signs them all, which is fine for development; production would normally use a separate CA for DB clients, so a leaked application certificate cannot open the DB. Existing files are kept until a week before they expire. Keycloak stays on plain HTTP at `localhost:8180` and trusts the dev CA (`KC_TRUSTSTORE_PATHS`) for its back-channel logout calls to fdrop. The demo stack in `deploy/compose/` does the same into `deploy/compose/certs/`. These keys are for development only.
 - Acceptance: in a fresh container, `./mvnw verify` passes with no extra setup; after starting the server, logging in at `https://localhost:8443` as admin / admin works, `sftp -P 2222 admin@localhost` accepts password admin, and after the admin creates and assigns an `sftp-target` destination, a file dropped into a forward folder using it arrives in `inbox`.
 - CI runs the same container with the Dev Containers CLI on an Ubuntu GitHub runner, which ships Podman: `devcontainer up --docker-path podman --docker-compose-path podman-compose`, then `./mvnw verify` inside it, so local and CI builds match.
 
@@ -1884,6 +1942,7 @@ All fdrop metrics are prefixed `fdrop_`. Durations are histograms in seconds, si
 | `fdrop_audit_queries_total` | counter | `outcome` (ok, invalid, error) | Audit log searches |
 | `fdrop_audit_query_seconds` | histogram | — | Audit log search time |
 | `fdrop_audit_chain_intact` | gauge | — | 1 when the last chain check found every node's chain intact, 0 when it found a broken link |
+| `fdrop_db_client_cert_expiry_seconds` | gauge | — | Seconds until the metadata DB client certificate (`db.tls.cert`) expires; absent with H2 or `db.tls.mode: disable` |
 
 Micrometer's standard JVM and process metrics (`jvm_memory_*`, `jvm_gc_*`, `jvm_threads_*`, `process_*`), Netty's pooled buffer memory, and the DB connection pool (`hikaricp_*`) are included too.
 
@@ -1922,6 +1981,7 @@ scrape_configs:
 | `FdropAuditWriteFailing` | any `fdrop_audit_write_failures_total` increase, or the buffer over half full for 5 min | critical |
 | `FdropAuditChainBroken` | `fdrop_audit_chain_intact` is 0: the last chain check found a broken link | critical |
 | `FdropAuditIndexLag` | `fdrop_audit_index_lag_seconds` over 15 min for 15 min | warning |
+| `FdropDbClientCertExpiring` | `fdrop_db_client_cert_expiry_seconds` under 14 days | warning |
 | `FdropSearchIndexLag` | `fdrop_search_index_lag_seconds` over 15 min for 15 min | warning |
 | `FdropSearchExtractFailing` | `failed` and `timeout` above 20% of extractions over 1 h | warning |
 | `FdropDecryptionFailures` | any increase in `fdrop_encryption_failures_total`: stored data was altered or corrupted | critical |
@@ -1944,6 +2004,7 @@ scrape_configs:
 - Destination and assignment tests: only admins manage destinations; a user's drop-down lists only assigned, enabled destinations and never shows hosts or keys; creating a folder with an unassigned destination is refused; removing an assignment pauses that user's folders; a destination in use cannot be deleted.
 - Forward tests against OpenSSH Testcontainers: file arrives complete under its final name; pinned host key and host-CA modes accept the right server and fail fast on a wrong key, an unsigned key or an expired certificate; the destination rejects fdrop without the right client key or user certificate; password auth is never attempted; key rotation works without downtime; destination down then up is retried; hosts outside `forward.allowedHosts` are refused; private keys never appear in API responses or logs.
 - My uploads tests: uploads over the browser and SFTP both appear with the right size and Folder or Forward badge; forward status follows the job; rows survive move, delete and forwarding; users never see other users' rows; filters, totals and paging are correct; retention removes old rows; the recorded IP is the real client's behind a trusted proxy, both for HTTP (`X-Forwarded-For`) and SFTP (PROXY protocol), and a forged `X-Forwarded-For` from an untrusted address is ignored.
+- Metadata DB TLS tests against a PostgreSQL Testcontainer configured like the dev container's (`ssl = on`, `hostssl … cert` only), with certificates generated per test run: fdrop connects with its client certificate and runs the migrations; a connection with no client certificate, a certificate from another CA, a CN that is not the DB user, or plain TCP is refused by the server; fdrop refuses a server certificate from another CA or for another host name (`verify-full`), refuses to start with a PostgreSQL URL and missing or mismatched `db.tls` files or with `ssl*` parameters in the URL, and starts with a warning under `mode: disable`; a renewed client certificate is used by new connections without a restart; `fdrop_db_client_cert_expiry_seconds` reports the certificate's remaining life; and no log line contains key material. The expiry and audit tests that need PostgreSQL (two sweeping nodes, `SKIP LOCKED`, per-node audit chains) run on the same TLS-configured container.
 - Metrics tests: `/metrics` is served only on the management port and returns valid Prometheus and OpenMetrics output; the bearer token is enforced when set; every documented metric appears with its labels; no label value contains a test username, file name, path or hostname; `/readyz` reports degraded when Keycloak is stopped and 503 when the DB is; `promtool check rules` passes on `deploy/prometheus/alerts.yml`.
 - File expiry tests: the syntax cases file passes in `fdrop-core`, Vitest and `fdrop-cli`, including calendar months and years (31 January, 29 February) and every error message; with a fake clock, a file uploaded over HTTP (resumable and simple), the CLI and SFTP gets the right expiry from the upload, the folder default, the home default or the folder maximum, counted from completion; values over a maximum and in forward folders are refused before any bytes are sent; conflicting header and field are refused; `PATCH` extends, shortens and clears within limits and is refused for read-only members; moves into a folder with a shorter maximum shorten the expiry; `applyToExisting` changes only files over the new maximum; an expired file is hidden from HTTP and SFTP listings and opens at its expiry instant and an open download is cut off; SFTP control files before and after the upload, with WinSCP-style temporary names, read back and `rm`, a pending value that lapses, a bad value failing the close with its message, and the reserved suffix refused over HTTP; forward folder files expire N days after `SENT` and never before; deletion on the local backend and on MinIO with `DeleteObjects`, a storage error retried, two sweeping nodes on one PostgreSQL deleting each file once, a node killed mid-batch whose claims are taken over, and a server stopped past many expiries deleting them all at start; audit entries and metrics as documented.
 - Audit log tests: every existing `Audit.log` call lands in `audit_event` with the right group, outcome and summary, and its log line is unchanged; events survive a DB outage through the buffer and are counted when the buffer overflows; the chain verifies across restarts and two nodes, and an edited, deleted or reordered row is reported at the right event; pruning anchors the chain and verification still passes; the default view shows an event at once and searches find it after indexing; field syntax (`user:`, `ip:` with CIDR, `path:` prefixes, `outcome:`, dates) and free text return exactly the matching events; facets count the filtered set; the file search API never returns audit data and the audit API never returns file contents; standard users, application accounts and admins without two factors get `403`; viewing, searching and exporting are audited; exports stream JSON Lines identical to the log file and CSV, and refuse more than `audit.exportMax`; the audit index directory holds no plaintext username or IP from the fixtures when encryption is on; Playwright: filters, side panel, follow live and export at phone and desktop sizes, with an axe check.

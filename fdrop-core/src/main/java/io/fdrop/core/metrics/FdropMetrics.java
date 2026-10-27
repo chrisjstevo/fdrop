@@ -79,7 +79,8 @@ public final class FdropMetrics {
             Map.entry("fdrop_audit_index_lag_seconds", Set.of()),
             Map.entry("fdrop_audit_queries_total", Set.of("outcome")),
             Map.entry("fdrop_audit_query_seconds", Set.of()),
-            Map.entry("fdrop_audit_chain_intact", Set.of()));
+            Map.entry("fdrop_audit_chain_intact", Set.of()),
+            Map.entry("fdrop_db_client_cert_expiry_seconds", Set.of()));
 
     private final PrometheusMeterRegistry registry;
     private final Duration[] buckets;
@@ -323,6 +324,12 @@ public final class FdropMetrics {
         if (nanos > 0) {
             timer("fdrop.search.query").record(nanos, TimeUnit.NANOSECONDS);
         }
+    }
+
+    /** Time left on the metadata DB client certificate, read when scraped so a renewal shows at once. */
+    public void dbClientCertExpiry(java.util.function.DoubleSupplier seconds) {
+        Gauge.builder("fdrop.db.client.cert.expiry", seconds, java.util.function.DoubleSupplier::getAsDouble)
+                .baseUnit("seconds").register(registry);
     }
 
     public void searchIndex(long documents, double lagSeconds) {

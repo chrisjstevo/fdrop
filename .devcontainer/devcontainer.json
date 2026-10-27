@@ -2,14 +2,14 @@
   "name": "fdrop",
   "dockerComposeFile": "compose.yaml",
   "service": "dev",
-  "runServices": ["certs", "localhost", "dev", "keycloak", "sftp-target", "prometheus"],
+  "runServices": ["certs", "localhost", "dev", "keycloak", "postgres", "sftp-target", "prometheus"],
   "workspaceFolder": "/workspaces/fdrop",
   "features": {
     "ghcr.io/devcontainers/features/java:1": { "version": "none", "installMaven": "true", "mavenVersion": "3.9" },
     "ghcr.io/devcontainers/features/node:1": { "version": "22" },
     "ghcr.io/devcontainers/features/aws-cli:1": {}
   },
-  "forwardPorts": [8443, 8081, 8444, 2222, 5173, 8180, 9090, 9000, 9001],
+  "forwardPorts": [8443, 8081, 8444, 2222, 5173, 8180, 5432, 9090, 9000, 9001],
   "portsAttributes": {
     "8443": { "label": "fdrop HTTPS", "protocol": "https" },
     "8081": { "label": "fdrop management (metrics)" },
@@ -17,6 +17,7 @@
     "2222": { "label": "fdrop SFTP" },
     "5173": { "label": "Vite dev server", "protocol": "https" },
     "8180": { "label": "Keycloak" },
+    "5432": { "label": "PostgreSQL (TLS + client certificate)" },
     "9090": { "label": "Prometheus" },
     "9000": { "label": "MinIO API" },
     "9001": { "label": "MinIO console" }
@@ -29,7 +30,7 @@
     "FDROP_LOG_FORMAT": "PLAIN"
   },
   "updateRemoteUserUID": false,
-  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
+  "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.m2 && sudo apt-get install -y -q postgresql-client && ./mvnw -B -ntp dependency:go-offline && (cd fdrop-web && npm ci)",
   "customizations": {
     "vscode": {
       "extensions": [

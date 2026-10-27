@@ -127,6 +127,13 @@ groups:
         annotations:
           summary: A node's audit index is more than 15 minutes behind; recent events are listed but not searchable there
 
+      - alert: FdropDbClientCertExpiring
+        expr: min(fdrop_db_client_cert_expiry_seconds{job="fdrop"}) < 14 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: The metadata DB client certificate (db.tls.cert) expires within 14 days; when it does, fdrop cannot reach its DB
+
       - alert: FdropDecryptionFailures
         expr: increase(fdrop_encryption_failures_total{job="fdrop"}[5m]) > 0
         labels:

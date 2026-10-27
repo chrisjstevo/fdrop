@@ -123,9 +123,13 @@ expiry:
     suffix: .fdrop-expires # control file suffix; reserved on every protocol
     pendingFor: 10m        # how long a control file written before its file is kept
 db:
-  url: jdbc:postgresql://db.example.com/fdrop
-  username: fdrop
-  password: ${FDROP_DB_PASSWORD}
+  url: jdbc:postgresql://db.example.com:5432/fdrop   # no ssl* parameters here: TLS is set under db.tls
+  username: fdrop          # must equal the client certificate's CN (or be mapped to it in pg_ident.conf)
+  tls:                     # TLS with a client certificate, see SPEC.md "Metadata DB connection"
+    mode: verify-full      # verify-full (default) | disable (no TLS: never in production)
+    ca: /etc/fdrop/db/ca.crt          # PEM: the CA that signed the DB server's certificate
+    cert: /etc/fdrop/db/client.crt    # PEM: fdrop's client certificate; renewals are picked up within 30 min
+    key: /etc/fdrop/db/client.key     # PEM, PKCS#8 (BEGIN PRIVATE KEY)
 limits:
   maxFileSize: 100GiB
   defaultQuota: 50GiB

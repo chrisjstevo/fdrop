@@ -21,6 +21,7 @@
     <module>fdrop-search</module>
     <module>fdrop-server</module>
     <module>fdrop-cli</module>
+    <module>fdrop-http-client-java</module>
   </modules>
 
   <properties>
@@ -135,6 +136,11 @@
       <dependency>
         <groupId>io.fdrop</groupId>
         <artifactId>fdrop-search</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.fdrop</groupId>
+        <artifactId>fdrop-http-client-java</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

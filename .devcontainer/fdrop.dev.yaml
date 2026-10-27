@@ -40,4 +40,13 @@ storage:
     # files stored before encryption was added are still served; encrypt them with the re-encryption job
     allowPlaintextReads: true
 db:
-  url: jdbc:h2:file:./data/meta;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+  # the compose `postgres` service, reached as production does: TLS with verify-full and a client certificate (CN=fdrop)
+  # instead of a password. The certificates are made by the `certs` service.
+  url: jdbc:postgresql://localhost:5432/fdrop
+  username: fdrop
+  password: ""
+  tls:
+    mode: verify-full
+    ca: .devcontainer/certs/ca.crt
+    cert: .devcontainer/certs/fdrop-db.crt
+    key: .devcontainer/certs/fdrop-db.key

@@ -297,6 +297,19 @@ public class FdropConfig {
         public String username = "sa";
         public String password = "";
         public int maxPoolSize = 16;
+        public DbTls tls = new DbTls();
+    }
+
+    /** TLS with a client certificate to PostgreSQL (see "Metadata DB connection" in SPEC.md); ignored for H2. */
+    public static class DbTls {
+        /** verify-full (check the server's certificate and host name) or disable (no TLS; logged as a warning). */
+        public String mode = "verify-full";
+        /** PEM: the CA that signed the DB server's certificate. */
+        public String ca;
+        /** PEM: fdrop's client certificate (its CN is the DB user). */
+        public String cert;
+        /** PEM, PKCS#8: the client certificate's private key. */
+        public String key;
     }
 
     public static class Limits {

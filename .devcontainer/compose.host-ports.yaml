@@ -1,7 +1,7 @@
 # Publishes the dev services' ports on the host, for running the dev stack from the command line rather than
 # from an IDE (VS Code and IntelliJ forward ports themselves; don't use this file with them):
 #   podman compose -f .devcontainer/compose.yaml -f .devcontainer/compose.host-ports.yaml up -d
-# The ports go on the localhost service because dev, keycloak and prometheus share its network.
+# The ports go on the localhost service because dev, keycloak, postgres and prometheus share its network.
 services:
   localhost:
     ports:
@@ -11,4 +11,5 @@ services:
       - 127.0.0.1:2222:2222   # fdrop SFTP
       - 127.0.0.1:5173:5173   # Vite dev server
       - 127.0.0.1:8180:8180   # Keycloak
+      - 127.0.0.1:5432:5432   # PostgreSQL (TLS + client certificate only)
       - 127.0.0.1:9090:9090   # Prometheus

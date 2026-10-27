@@ -95,6 +95,15 @@ public final class TestCerts {
                 new GeneralName(GeneralName.dNSName, "localhost"), new GeneralName(GeneralName.iPAddress, "127.0.0.1"));
     }
 
+    /** A server certificate for exactly these DNS names (no addresses), for host name checks. */
+    public static Issued serverFor(Issued ca, String... dnsNames) {
+        GeneralName[] names = new GeneralName[dnsNames.length];
+        for (int i = 0; i < dnsNames.length; i++) {
+            names[i] = new GeneralName(GeneralName.dNSName, dnsNames[i]);
+        }
+        return leaf(ca, "CN=" + dnsNames[0], Duration.ofDays(30), KeyPurposeId.id_kp_serverAuth, names);
+    }
+
     /** A client certificate; {@code dn} like {@code CN=app1,O=Test}, SANs as {@code DNS:x} or {@code URI:x}. */
     public static Issued client(Issued ca, String dn, String... sans) {
         return client(ca, dn, Duration.ofDays(30), sans);

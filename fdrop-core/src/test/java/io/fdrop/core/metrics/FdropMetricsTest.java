@@ -54,6 +54,7 @@ class FdropMetricsTest {
         m.auditIndexLag(1.0);
         m.auditQuery("ok", 1000);
         m.auditChainIntact(true);
+        m.dbClientCertExpiry(() -> 86400);
         m.update(new FdropMetrics.Snapshot(Map.of("user", 3L, "application", 1L), 1000, Map.of("shared", 1L), Map.of("OPEN", 2L),
                 Map.of(List.of("QUEUED", "dst_1"), 1L)));
 
@@ -90,7 +91,7 @@ class FdropMetricsTest {
                 "fdrop_search_index_lag_seconds", "fdrop_search_extract_total", "fdrop_search_extract_seconds",
                 "fdrop_audit_events_total", "fdrop_audit_write_failures_total", "fdrop_audit_buffer_events",
                 "fdrop_audit_index_lag_seconds", "fdrop_audit_queries_total", "fdrop_audit_query_seconds",
-                "fdrop_audit_chain_intact");
+                "fdrop_audit_chain_intact", "fdrop_db_client_cert_expiry_seconds");
         assertThat(m.scrape("application/openmetrics-text")).contains("# EOF");
     }
 }

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.fdrop</groupId>
+    <artifactId>fdrop-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>fdrop-http-client-java</artifactId>
+  <name>fdrop-http-client-java</name>
+  <description>A Java client for fdrop's REST API: resumable chunked uploads behind a simple upload call, with retries</description>
+
+  <dependencies>
+    <!-- the JDK's HttpClient and Jackson only, so applications can embed it without the server's dependencies -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+
+    <!-- the tests run a real fdrop HTTP server in the test JVM; nothing of it reaches the client jar -->
+    <dependency>
+      <groupId>io.fdrop</groupId>
+      <artifactId>fdrop-http</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.fdrop</groupId>
+      <artifactId>fdrop-storage-local</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.fdrop</groupId>
+      <artifactId>fdrop-core</artifactId>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

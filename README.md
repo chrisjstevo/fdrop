@@ -23,6 +23,7 @@ The full specification is in [SPEC.md](SPEC.md).
 | `fdrop-web` | React + TypeScript UI, built with npm (Vite) and packaged as static resources |
 | `fdrop-server` | `Main`, the shaded fat jar and the container image (Jib) |
 | `fdrop-cli` | `fdrop`, the command line client: `fdrop-cli.jar` and a release `.tar.gz` |
+| `fdrop-http-client-java` | A Java client library for the REST API; uploads are resumable and chunked underneath |
 
 `deploy/` has an example production config, Prometheus scrape config and alert rules, a Grafana dashboard, a
 Quadlet unit and a local demo Compose file.
@@ -263,6 +264,21 @@ searches names and contents. The index lives in `data/search` and catches up wit
 **Admin: Search index** shows how far behind it is and can rebuild it. Text is read from documents by Apache Tika in a
 separate short-lived JVM per file.
 
+### The dev database (PostgreSQL over mTLS)
+
+The dev container's metadata DB is the `postgres` service, reached the way production reaches it: TLS with
+`verify-full` and a client certificate (`.devcontainer/certs/fdrop-db.crt`, `CN=fdrop`) instead of a password. Plain
+TCP and password logins are refused by `.devcontainer/postgres/pg_hba.conf`. To look inside:
+
+```bash
+psql "host=localhost dbname=fdrop user=fdrop sslmode=verify-full sslrootcert=.devcontainer/certs/ca.crt sslcert=.devcontainer/certs/fdrop-db.crt sslkey=.devcontainer/certs/fdrop-db.key"
+```
+
+`psql` refuses a world-readable key; copy it with `install -m 600 .devcontainer/certs/fdrop-db.key /tmp/fdrop-db.key`
+and point `sslkey` there. Data lives in the `devcontainer_fdrop-pgdata` volume. Earlier dev data in H2
+(`data/meta`) is not migrated, so after switching delete `data/` to start clean; the unit tests still use in-memory
+H2, and `PostgresTlsIT` starts its own PostgreSQL with the same settings.
+
 ### Trying the audit log
 
 Sign in as an admin with two factors and open **Admin: Audit log**. Every event since the database was created is
@@ -278,6 +294,30 @@ Every stored file is encrypted (see SPEC.md, Encryption at rest). The dev config
 encrypt them, open **Admin: Encryption**, press **Count objects now**, then **Encrypt** on the "Not encrypted"
 row. For anything real, make a key with `echo "k1:$(openssl rand -base64 32)"` and pass it as
 `FDROP_STORAGE_ENCRYPTION_LOCAL_KEYS`; fdrop refuses to start with encryption on and no working key.
+
+## Java client library
+
+`fdrop-http-client-java` lets a Java application use fdrop's REST API without knowing its upload protocol. It
+depends only on the JDK and Jackson.
+
+```java
+try (FdropClient fdrop = FdropClient.builder()
+        .baseUrl("https://fdrop.example.com:8444")              // the application mTLS port
+        .clientCertificate(Path.of("app.crt"), Path.of("app.key"), Path.of("ca.crt"))
+        .maxAttempts(5)                                          // per request, and per chunk
+        .build()) {
+    FileEntry f = fdrop.upload(Path.of("export.csv"), "/shared/Finance/",
+            UploadOptions.DEFAULTS.withExpiresIn("30 days"));
+}
+```
+
+`upload` creates an upload session, sends the file in the server's chunk size (three chunks at a time), retries
+each failed chunk, and completes the session with the whole file's SHA-256. A request that keeps failing with a
+network error, timeout, `429` or `5xx` throws `FdropRetriesExhaustedException` after `maxAttempts` tries, and the
+unfinished session is discarded. Refusals (`403`, `404`, `409`, a full quota) throw `FdropApiException` at once with
+fdrop's problem type and detail. People and scripts can use `.bearerToken(() -> token)` instead, and application
+accounts with a password `.basicAuth(user, password)`. `InputStream` uploads need the size up front; each chunk is
+held in memory while it is sent.
 
 ## Configuration
 
@@ -322,3 +362,9 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
   filters wrap above the list instead of sitting in a sheet. Every node runs the nightly prune and the chain check;
   a second run finds nothing to do. An export over `audit.exportMax` is refused with `413`
   (`audit-export-too-large`).
+- Metadata DB TLS: the client key must be PKCS#8 (`openssl pkcs8 -topk8 -nocrypt` converts a traditional one), since
+  fdrop reads it without BouncyCastle. The PostgreSQL integration tests cover the TLS connection and the audit chain;
+  the two-node expiry sweeper test on PostgreSQL is still to be written.
+- Java client: an upload that gives up is not resumed by a later call (unlike `fdrop-cli`, which saves its session);
+  the client discards the session and the next upload starts again. Admin endpoints and SSH key and two-factor
+  management are not in the client.

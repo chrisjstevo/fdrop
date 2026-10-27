@@ -27,6 +27,27 @@ services:
       - /sys:/sys:ro                 # keep-id can't mount sysfs in localhost's network namespace (another user namespace)
     depends_on:
       certs: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+  postgres:                          # the metadata DB, reached only over TLS with a client certificate, as in production
+    image: docker.io/library/postgres:17-alpine
+    network_mode: service:localhost  # listens on localhost:5432, matching the server certificate's SAN
+    environment:
+      POSTGRES_USER: fdrop           # the DB user; equals the CN of fdrop's client certificate
+      POSTGRES_DB: fdrop
+      POSTGRES_HOST_AUTH_METHOD: trust   # only for initdb; pg_hba.conf below trusts the local socket and nothing else
+    # PostgreSQL refuses a world-readable key, so the dev certificates are copied in with postgres-only permissions
+    entrypoint: ["sh", "-c", "install -d -o postgres -g postgres -m 700 /var/lib/postgresql/tls && install -o postgres -g postgres -m 600 /etc/fdrop/certs/postgres.key /var/lib/postgresql/tls/server.key && install -o postgres -g postgres -m 644 /etc/fdrop/certs/postgres.crt /etc/fdrop/certs/ca.crt /var/lib/postgresql/tls/ && exec docker-entrypoint.sh postgres -c config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - fdrop-pgdata:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro,z
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro,z
+      - ./certs:/etc/fdrop/certs:ro,z
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "/var/run/postgresql", "-U", "fdrop"]
+      interval: 2s
+      retries: 30
+    depends_on:
+      certs: { condition: service_completed_successfully }
   keycloak:
     image: quay.io/keycloak/keycloak:26.4
     command: ["start-dev", "--import-realm", "--http-port=8180"]
@@ -55,3 +76,4 @@ services:
       - ./sftp-target:/home/target/.ssh/keys:ro,z   # every file is a key; README.pub keeps the folder non-empty
 volumes:
   fdrop-m2:
+  fdrop-pgdata:                      # the dev metadata DB, kept across container rebuilds

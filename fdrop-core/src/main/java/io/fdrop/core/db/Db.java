@@ -42,7 +42,10 @@ public final class Db implements AutoCloseable {
         HikariConfig hc = new HikariConfig();
         hc.setJdbcUrl(cfg.url);
         hc.setUsername(cfg.username);
-        hc.setPassword(cfg.password);
+        if (cfg.password != null && !cfg.password.isEmpty()) {
+            hc.setPassword(cfg.password);
+        }
+        DbTls.properties(cfg).forEach(hc::addDataSourceProperty);
         hc.setMaximumPoolSize(cfg.maxPoolSize);
         hc.setPoolName("fdrop-db");
         if (meterRegistry != null) {

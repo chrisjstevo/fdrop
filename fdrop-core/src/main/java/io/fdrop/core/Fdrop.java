@@ -107,6 +107,9 @@ public final class Fdrop implements AutoCloseable {
         this.ssh = ssh;
         this.metrics = new FdropMetrics(config.management.histogramBuckets);
         this.db = new Db(config.db, metrics.registry());
+        if (io.fdrop.core.db.DbTls.enabled(config.db)) {
+            metrics.dbClientCertExpiry(() -> io.fdrop.core.db.DbTls.certExpirySeconds(config.db));
+        }
         // first, so the events logged while starting up reach the DB too
         this.auditStore = new AuditStore(config.audit, db, metrics);
         Audit.setSink(auditStore);
