@@ -1,0 +1,138 @@
+/* Admin: Audit log. Shares the table, cards and filters of pages.module.css; these are its own pieces. */
+
+.search {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 4px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--color-hover);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--color-selected);
+  border-color: var(--color-navy-deep);
+  font-weight: 600;
+}
+
+.count {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.clear {
+  background: none;
+  border: none;
+  color: var(--color-link);
+  font-size: var(--text-small);
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+/* Failures and refusals: the coral error icon, with the text beside it carrying the meaning. */
+.errorIcon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-coral);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.summaryCell {
+  overflow-wrap: anywhere;
+  min-width: 240px;
+}
+
+.rowLink {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-link);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rowLink:hover {
+  text-decoration: underline;
+}
+
+.cardButton {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.checks {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.panelHeading {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-body);
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
