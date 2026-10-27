@@ -258,6 +258,19 @@ password and then a code (`sftp -o PreferredAuthentications=keyboard-interactive
 
 Expired files disappear at once and are deleted by the sweeper within about `expiry.sweepInterval` (30 s).
 
+### Trying fdrop watch
+
+Register `.devcontainer/certs/app-demo.crt` on the `app-demo` account (Admin: Applications), then watch a folder
+and drop files into it:
+
+```bash
+mkdir -p /tmp/outbox
+java -jar fdrop-cli/target/fdrop-cli.jar watch /tmp/outbox /home/ --settle 2s --url https://localhost:8444 \
+    --cert .devcontainer/certs/app-demo.crt --key .devcontainer/certs/app-demo.key --ca .devcontainer/certs/ca.crt
+```
+
+Each file appears in `app-demo`'s home a couple of seconds after it stops changing; Ctrl-C stops the watcher.
+
 ### Trying search
 
 Type in the search box at the top: matching names from everywhere you can see appear as you type, and Enter
@@ -378,3 +391,11 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 - .NET client: `Me` is `Account` and `MoveAsync` takes `source` and `destination` (Visual Basic keywords are flagged in
   a public .NET API). The tests run on VSTest rather than xUnit's newer test platform, for `dotnet test --filter` and
   coverlet.
+- `fdrop watch`: `SIGTERM` and `SIGINT` are caught through `sun.misc.Signal` (looked up reflectively, as the JDK has no
+  public API for it), so a stop exits 0 after in-flight uploads finish; on a JDK without it a stop simply ends the
+  process, and unfinished uploads still resume at the next start. `--include` and `--ignore` also accept
+  comma-separated lists, so the config file can set several. The watch integration tests leave resuming and
+  connection drops to the `upload` tests and the fake-uploader unit tests (see SPEC.md, Command line client, Tests).
+- Client libraries: `FileEntry.isDirectory` (Java) and `IsDirectory` (.NET) now treat every type but `FILE` as a
+  folder; they had looked for a `DIRECTORY` type that fdrop never sends (it sends `DIR`, `AREA`, `SHARED_FOLDER`
+  and `FORWARD_FOLDER`).

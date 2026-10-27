@@ -1,0 +1,52 @@
+# fdrop watch as a systemd service: one instance per pair of folders, configured in
+# /etc/fdrop/watch/<name>.properties (owned by the fdrop user, mode 0600), for example:
+#
+#   url=https://fdrop.example.com:8444
+#   cert=/etc/fdrop/watch/finance.crt
+#   key=/etc/fdrop/watch/finance.key
+#   watch.localDir=/srv/outbox/finance
+#   watch.remoteDir=/shared/finance/incoming/
+#   watch.afterUpload=move=/srv/sent/finance
+#
+# Install the release archive in /opt/fdrop-cli, create the fdrop user, then:
+#   systemctl enable --now fdrop-watch@finance
+#
+# The file system is read-only to the service apart from its state folder. With --after-upload delete or move=, or
+# --on-failure move=, give it write access to those folders with a drop-in (systemctl edit fdrop-watch@finance):
+#   [Service]
+#   ReadWritePaths=/srv/outbox/finance /srv/sent/finance
+
+[Unit]
+Description=fdrop watch %i: upload new files from a local folder to fdrop
+Documentation=https://github.com/chrisjstevo/fdrop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fdrop
+Group=fdrop
+Environment=FDROP_CONFIG_FILE=/etc/fdrop/watch/%i.properties
+# the ledger, lock and saved upload sessions live in /var/lib/fdrop-watch/%i
+StateDirectory=fdrop-watch/%i
+Environment=XDG_STATE_HOME=/var/lib/fdrop-watch/%i
+ExecStart=/opt/fdrop-cli/fdrop watch --json --status-file /var/lib/fdrop-watch/%i/status.json
+# 0 is a clean stop; 1 is a configuration error that a restart cannot fix
+Restart=on-failure
+RestartSec=30s
+RestartPreventExitStatus=1
+# SIGTERM stops taking new files and lets uploads finish for --shutdown-timeout (30 s)
+TimeoutStopSec=60s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

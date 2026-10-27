@@ -1334,16 +1334,18 @@ An **Application accounts** admin screen, separate from Users, lists each accoun
 
 ## Command line client (fdrop-cli)
 
-`fdrop-cli` is a Maven module that builds `fdrop`, a Java command line client that lets a system upload files to fdrop unattended. It signs in as an application account with a client certificate on the mTLS listener and uploads over HTTPS with the resumable upload protocol, so a large upload survives network drops and even a restart of the CLI.
+`fdrop-cli` is a Maven module that builds `fdrop`, a Java command line client that lets a system upload files to fdrop unattended, one at a time or by watching a directory. It signs in as an application account with a client certificate on the mTLS listener and uploads over HTTPS with the resumable upload protocol, so a large upload survives network drops and even a restart of the CLI.
 
 ### Usage
 
 ```text
 fdrop upload <local-file> <remote-path> [options]
+fdrop watch <local-dir> <remote-dir>/ [options]
 fdrop whoami [options]
 ```
 
 - `upload` sends one file. `<remote-path>` is a path in the account's virtual tree: a directory ending in `/` (the local file name is kept, e.g. `/forward/partner-a/`) or a full file path (`/shared/finance/2026-10.csv`).
+- `watch` runs until stopped and uploads each new file that appears in `<local-dir>`; see Watching a directory.
 - `whoami` calls `GET /api/v1/me` and prints the account name and kind, to check certificate and connectivity before a job is scheduled.
 
 | Option | Env var | Notes |
@@ -1379,6 +1381,126 @@ fdrop whoami [options]
 
 Progress goes to stderr as a percentage of bytes acknowledged by the server, only when stderr is a terminal. Requests carry `User-Agent: fdrop-cli/<version>`, which fdrop records in the audit log.
 
+### Watching a directory
+
+`fdrop watch` keeps running and uploads every new file that appears in a local directory, for systems that drop files into a folder rather than call a command. It uses the same certificate, options, chunked resumable upload and retries as `fdrop upload`; each file goes up exactly as `fdrop upload <file> <remote-dir>/<relative path>` would send it.
+
+```text
+fdrop watch <local-dir> <remote-dir>/ [options]
+fdrop watch --local-dir <local-dir> --remote-dir <remote-dir>/ [options]
+```
+
+#### The two folders
+
+Every watch names exactly one local folder to listen to and one folder on the server to upload into; there are no defaults for either, and the watcher refuses to start without both.
+
+| What | Argument | Option | Env var | Config key |
+| --- | --- | --- | --- | --- |
+| The local folder to listen to | first | `--local-dir` | `FDROP_WATCH_LOCAL_DIR` | `watch.localDir` |
+| The server folder to upload into | second | `--remote-dir` | `FDROP_WATCH_REMOTE_DIR` | `watch.remoteDir` |
+
+- **Local folder.** An absolute path, or one relative to the working directory, resolved to its real path at start and logged. It must exist, be a directory and be readable (exit code 1 otherwise). It may not be inside `--after-upload move=` or `--on-failure move=` targets, nor contain them.
+- **Server folder.** A directory in the account's virtual tree, written with a trailing `/`: the account's home (`/home/inbound/`), a shared folder it can write to (`/shared/finance/incoming/`), or a forward folder (`/forward/partner-a/`), whose files are then sent on as usual. At start the watcher checks with `GET /api/v1/files?path=<remote-dir>` that it exists, is a directory and is writable by the account; otherwise it exits with code 4 and the server's reason. It does not create the folder itself, so a typo cannot quietly start a new one; with `--recursive`, it creates only the subfolders below it.
+- **How a file's name on the server is formed:** the server folder plus the file's path relative to the local folder. With `fdrop watch /srv/outbox /shared/finance/incoming/ --recursive`, `/srv/outbox/2026/10/ledger.csv` is uploaded as `/shared/finance/incoming/2026/10/ledger.csv`.
+- **One pair per process.** To watch several folders, run one watcher per pair. The systemd template does this with one properties file per pair, for example `/etc/fdrop/watch/finance.properties`:
+
+  ```properties
+  url=https://fdrop.example.com:8444
+  cert=/etc/fdrop/watch/finance.crt
+  key=/etc/fdrop/watch/finance.key
+  watch.localDir=/srv/outbox/finance
+  watch.remoteDir=/shared/finance/incoming/
+  watch.afterUpload=move=/srv/sent/finance
+  ```
+
+  Run it with `systemctl enable --now fdrop-watch@finance`.
+- **Shown in the log, status file and ledger.** Both folders appear in the start line, in the status file, and in the ledger's identity (see below), so changing either one starts a new ledger rather than reusing another folder's history.
+
+#### Finding new files
+
+- **Events.** The watcher registers `<local-dir>` with a `java.nio.file.WatchService` for `ENTRY_CREATE`, `ENTRY_MODIFY` and `OVERFLOW`, using the JDK's native watch service (inotify on Linux).
+- **Subdirectories.** `WatchService` is not recursive. With `--recursive`, every subdirectory is registered as well, including ones created later. A file in `a/b/` goes to `<remote-dir>/a/b/`, and missing remote directories are created first with `POST /api/v1/files/mkdir`. Without `--recursive`, subdirectories are ignored.
+- **Events are only a hint.** Every event is followed up by looking at the file itself.
+- **Rescans catch what events miss.** A full scan of the directory runs:
+  - at start
+  - after an `OVERFLOW` (the kernel's event queue filled)
+  - every `--rescan` interval (default 5 min)
+
+  Watch events are not delivered for network file systems (NFS, SMB) or for changes made on another host. `--poll <interval>` drops the `WatchService` and only scans, every interval (for example `--poll 30s`); the CLI prints a hint to use it when `<local-dir>` is on a network file system.
+- **Not uploaded:**
+  - symbolic links, logged as skipped
+  - anything that is not a regular file
+  - names matching `--ignore` globs, which by default are hidden files (`.*`) and the usual temporary names (`*.tmp`, `*.part`, `*.partial`, `*.crdownload`, `*~`). `--ignore` replaces the defaults and may be given several times.
+  - names not matching `--include` globs, when any are given
+- **Order.** Files found by a scan go up oldest first (by last-modified time). Files found by events go up in the order they became ready.
+
+#### When a file is ready
+
+A file appearing does not mean it has been written completely, so the watcher waits until it is ready before it uploads anything:
+
+- **Settling (default).** A file is ready when its size and last-modified time have not changed for `--settle` (default 10 s). Writers that write to a temporary name and then rename into place (the recommended way) are ready at once in practice, since the rename produces a complete file.
+- **Marker files.** With `--ready-marker <suffix>` (for example `.done`), `data.csv` is ready only when `data.csv.done` exists, and its size and last-modified time are then fixed. The marker is never uploaded, and is removed or moved along with its file (see `--after-upload`). This is for producers that cannot rename atomically.
+- **Changed while uploading.** The upload reads the file's SHA-256 first and the server checks it at `complete`. If the file's size or last-modified time changes during the upload, or `complete` reports a hash mismatch, the session is aborted. The file then waits to settle again and starts over, and a warning is logged.
+
+#### After an upload
+
+| `--after-upload` | Effect on a successful upload |
+| --- | --- |
+| `keep` (default) | Leave the file; the ledger (below) stops it going up again |
+| `delete` | Delete the local file (and its marker) once the server reports `COMPLETED` |
+| `move=<dir>` | Move it (and its marker) into `<dir>`, keeping its relative path. `<dir>` must be on the same file system, so the move is a rename, and outside the watched tree |
+
+A file the server refuses for good is set aside rather than retried forever. That covers `400`, `403`, `404`, `409` without `--overwrite`, `413`, and an assembly `FAILED` after the file had settled. With `--on-failure move=<dir>` it is moved there with a `<name>.error.txt` holding the problem's title and detail. By default (`keep`) it stays where it is, recorded as failed in the ledger, and is tried again only when its size or last-modified time changes. A file that only failed for network reasons after `--retry-for` is not a refusal: it stays queued and its session is kept, and the next rescan resumes it.
+
+#### State, restarts and one watcher per directory
+
+- **The ledger.** Each watch keeps a ledger in `~/.local/state/fdrop/watch/<id>/ledger.jsonl` (mode `0600`), where `<id>` is a hash of the URL, certificate fingerprint, local directory and remote directory. It is append-only JSON lines, compacted at start, with one record per file:
+  - relative path, size, last-modified time and SHA-256
+  - the remote path
+  - the outcome (`uploaded`, `refused` with the problem, or `changed`)
+  - the time
+- **What is uploaded again.** A file whose path, size and last-modified time match an `uploaded` record is not uploaded again, so `keep` does not repeat uploads after a restart. A file that changed after it was uploaded is uploaded again, with `--overwrite` if given; without it, the server's `409` makes it a refusal as above.
+- **Restarts.** In-progress uploads use the saved sessions of `fdrop upload`, so stopping and starting the watcher (or a crash) resumes the chunks already sent rather than starting again.
+- **One watcher per directory.** At start the watcher takes an exclusive `FileChannel` lock on `~/.local/state/fdrop/watch/<id>/lock`; a second watcher with the same settings exits with code 7 and a message naming the running one's PID. Two hosts watching the same network directory are not supported.
+
+#### Running it as a service
+
+- **Concurrency.** Up to `--max-files` files (default 2) upload at once, each with `--parallel` chunks at once, so a burst of small files does not wait behind one large one.
+- **Checks at start.**
+  1. `GET /api/v1/me` checks the certificate.
+  2. `GET /api/v1/files?path=<remote-dir>` checks the server folder exists, is a directory and is writable (see The two folders). Exit code 2 or 4 when these checks fail, so a misconfigured service fails at once rather than queueing files.
+  3. `<local-dir>` must exist, be a directory and be readable (exit code 1).
+- **While running, the server is retried.** If the server becomes unreachable, or starts refusing the certificate (`401`, for example after it expired), the watcher logs it and keeps retrying with backoff, without exiting. Files keep queueing locally, and uploads resume when the server is back. If `<local-dir>` disappears or becomes unreadable, the watcher exits with code 7.
+- **Logging.** One line per event on stderr: started, file ready, uploaded (path, size, duration, resumed or not), refused (with the problem), retrying, set aside, and stopped. With `--json` each line is a JSON object for log collectors. Progress percentages are not printed.
+- **Status file.** `--status-file <path>` writes a small JSON document, replaced atomically every 30 s and at each upload, that monitoring can read:
+  - the files queued and in progress
+  - the counts uploaded and refused since start
+  - the last successful upload and its time
+  - the last error
+- **Stopping.** `SIGTERM` or Ctrl-C stops taking new files. In-flight chunk requests may finish within `--shutdown-timeout` (default 30 s). Unfinished sessions and the ledger are kept, so the next start resumes. Exit code 0.
+- **Requests and the audit log.** Requests carry `User-Agent: fdrop-cli/<version> (watch)`, so the server's audit log tells watched uploads from single ones.
+- **Packaging.** The release archive adds a systemd unit template, `fdrop-watch@.service`. It runs `fdrop watch` as an unprivileged user with the settings in `/etc/fdrop/watch/%i.properties` (`Restart=on-failure`, `ProtectSystem=strict`, write access only to the watched, move and state directories), so one host can run several watches.
+
+#### Watch options
+
+These come in addition to the connection, `--overwrite`, `--expires-in`, `--parallel`, `--retry-for`, `--json` and `--config` options of `upload`. In the config file they take the same names without dashes (`watch.recursive=true`).
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `--local-dir` | required | The local folder to listen to (or the first argument) |
+| `--remote-dir` | required | The server folder to upload into, ending in `/` (or the second argument) |
+| `--recursive` | off | Watch subdirectories and keep their structure under `<remote-dir>` |
+| `--include`, `--ignore` | all files; hidden and temporary names ignored | Globs on the relative path, repeatable |
+| `--settle` | 10s | How long size and last-modified time must stay the same before a file is ready |
+| `--ready-marker` | — | Upload a file only when `<name><suffix>` exists, e.g. `.done` |
+| `--after-upload` | `keep` | `keep`, `delete` or `move=<dir>` |
+| `--on-failure` | `keep` | `keep` or `move=<dir>` for files the server refuses |
+| `--max-files` | 2 | Files uploaded at once (maximum 8) |
+| `--rescan` | 5m | Full scan interval, to catch missed events |
+| `--poll` | — | Scan only, every interval, without `WatchService` (network file systems) |
+| `--status-file` | — | Where to write the status JSON |
+| `--shutdown-timeout` | 30s | How long in-flight requests may finish after a stop signal |
+
 ### Exit codes
 
 | Code | Meaning |
@@ -1390,6 +1512,9 @@ Progress goes to stderr as a percentage of bytes acknowledged by the server, onl
 | 4 | Not allowed: `403` (no write permission), quota exceeded (`413`), or `404` (no such folder, or not a member) |
 | 5 | Gave up after `--retry-for` without reaching the server; the session is kept for a later run. `whoami` does not retry and exits 5 when the server cannot be reached |
 | 6 | Server-side failure: assembly `FAILED`, hash mismatch or an unexpected response |
+| 7 | `watch` only: another watcher already runs with the same settings, or the watched directory disappeared or became unreadable |
+
+`watch` exits 0 when stopped by a signal. At start it exits as `upload` would (1, 2 or 4) when the settings, certificate or remote directory are wrong, or 5 when the server cannot be reached at all. Once running, refused files and unreachable servers do not end it.
 
 Error messages print the server's problem JSON `title` and `detail`, never certificate or key contents.
 
@@ -1397,7 +1522,7 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 
 - `fdrop-cli` depends only on the JDK, picocli (argument parsing and help) and Jackson (JSON). It does not depend on `fdrop-core` or any server module at compile or run time, so the jar stays small and has no server code on the client; `fdrop-http` and `fdrop-storage-local` are test-scope dependencies only, for the integration tests, which start fdrop's HTTP server in the test JVM. `fdrop-cli` is the last module in the reactor. Its request and response types are its own records; the integration tests keep them in step with the server.
 - Private keys load with the JDK only: PKCS#8 PEM through `KeyFactory`, encrypted PKCS#8 through `EncryptedPrivateKeyInfo`, and PKCS#12 through `KeyStore`. Traditional OpenSSL (`BEGIN RSA PRIVATE KEY`) keys are refused with a hint to convert them with `openssl pkcs8 -topk8`.
-- `maven-shade-plugin` builds `fdrop-cli/target/fdrop-cli.jar`, run with `java -jar` on Java 21. The module also packages a `fdrop` launcher script and a `.tar.gz` with jar, script and README, attached to each release.
+- `maven-shade-plugin` builds `fdrop-cli/target/fdrop-cli.jar`, run with `java -jar` on Java 21. The module also packages a `fdrop` launcher script and a `.tar.gz` with jar, script, README and the `fdrop-watch@.service` systemd unit template, attached to each release.
 - The version printed by `fdrop --version` is the project version and commit, matching the server's `fdrop_build_info`.
 
 ### Tests
@@ -1405,7 +1530,27 @@ Error messages print the server's problem JSON `title` and `detail`, never certi
 - **Unit tests** (JUnit 5, Surefire): option precedence of options, environment variables and config file, and `--config` over `$FDROP_CONFIG_FILE`; refusal of a config file readable by others; PEM loading for RSA, EC and Ed25519 keys, encrypted PKCS#8 with its password file, PKCS#12, a clear error for a traditional OpenSSL key and for a key that is not the certificate's; remote path handling (directory versus file); session keys; backoff timing with a fake clock.
 - **Fake server tests:** a JDK `HttpsServer` in the test, requiring a client certificate, with certificates made per run by a test-only CA (BouncyCastle in test scope). It scripts responses to check: every chunk sent with its hash and every request with a client certificate and the `fdrop-cli` User-Agent; a connection dropped mid-chunk, a `503` and a `409` retried after a status check; a run that gives up keeps its session, and the next run resumes and sends only the missing chunks; `--no-resume`; a saved session the server forgot starts again; `202` polling on complete, and a failed assembly aborted with exit code 6; exit codes for `409`, `403`, `413`, `404`, `401` and a rejected chunk; an untrusted server certificate failing with exit code 2; giving up after `--retry-for`; usage errors.
 - **Integration tests** (Failsafe, `*IT.java`): fdrop's HTTP server with the mTLS listener in the test JVM, using the test identity provider of the server's own tests (no Keycloak), and an application account with a pinned certificate. The CLI uploads into `/home`, a shared folder where it is a read-write member, and a forward folder, whose forward job is then queued; it is refused (exit code 4) in a read-only folder and one it is not a member of; an existing file gives exit code 3 without `--overwrite`; an unregistered certificate and a disabled account give exit code 2. A 40 MiB file goes through a test TCP proxy that cuts the connection three times mid-transfer and arrives with the right SHA-256; and a run whose server becomes unreachable mid-upload gives up, then the next run resumes without re-sending the chunks that arrived.
-- **End-to-end test:** the shaded jar is run as a separate process with `java -jar` against the same kind of server, checking `--version`, `whoami --json`, `upload --json`, an existing file's exit code 3 with its message on stderr, and a usage error.
+- **Watch unit tests**, with a fake clock and a fake uploader:
+  - both folders required, from arguments, options, env vars or the config file, with the usual precedence; a server folder without a trailing `/` refused; move targets inside the watched folder refused
+  - settling (a file still growing is not ready; one unchanged for `--settle` is)
+  - marker files
+  - default and custom `--include` and `--ignore` globs
+  - symbolic links skipped
+  - ledger records, compaction, and the decisions to skip, upload again or treat as refused
+  - remote paths for nested files
+  - the lock refusing a second watcher
+  - option parsing for `move=<dir>` and its checks (same file system, outside the watched tree)
+  - a file that changes while it is uploading going up again once settled, an `OVERFLOW` asking for a full scan, a server that is unreachable keeping the file queued until `--rescan`, refused files not retried, and `--after-upload delete` removing the marker too
+- **Watch integration tests** (`WatchIT`) against the same in-JVM server, running the whole command in the test JVM. They check that:
+  - a file there at the start, one written in place, one renamed into the folder, a burst of 20 small files, and a file in a folder created while running all arrive once in the named server folder, keeping their paths with `--recursive`; a temporary name is not uploaded
+  - a restart uploads nothing again, because the ledger knows every file
+  - `move=` after the upload moves the file only after it arrived; the same name again without `--overwrite` is refused by the server and set aside with its `.error.txt`; the status file counts both
+  - `--poll` finds files without events
+  - a server folder that does not exist, or that the account may only read, and a local folder that does not exist, stop the watcher at start (codes 4, 4 and 1)
+  - a second watcher with the same settings exits with code 7, and so does the first when its folder is removed
+
+  Resuming an interrupted upload and surviving connection drops are the `upload` path's, already covered by the integration tests above. A file that changes during its upload, an `OVERFLOW`, and a server that is away for a while are covered by the unit tests with a fake uploader.
+- **End-to-end test:** the shaded jar is run as a separate process with `java -jar` against the same kind of server, checking `--version`, `whoami --json`, `upload --json`, an existing file's exit code 3 with its message on stderr, and a usage error; and `watch --json` as a background process that uploads a file dropped into its directory and exits 0 on `SIGTERM`.
 
 ## Java client library (fdrop-http-client-java)
 
@@ -2211,7 +2356,8 @@ scrape_configs:
 12. **M12 Search:** `fdrop-search` with the Lucene index per node, change feed and commit positions, Tika extraction in a forked JVM with shared text cache, access filtering and per-hit checks, `EncryptedDirectory`, the search box drop-down and results page, API, admin screen, rebuild, metrics and alerts.
 13. **M13 Audit log:** batched, hash-chained `audit_event` store with buffer and retention, the separate encrypted Lucene audit index with facets, the Admin: Audit log page with search, filters, side panel, follow live, export and chain verification, API, metrics and alerts.
 14. **M14 Client libraries:** `fdrop-http-client-java`, then `fdrop-http-client-dotnet` with the shared retry cases, the Java test server for its integration tests, the NuGet package, and the .NET SDK in the dev container.
-15. **M15 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
+15. **M15 Watched directories:** `fdrop watch` with `WatchService` events, rescans and polling, settling and marker files, the ledger and lock, after-upload and on-failure handling, the status file, the systemd unit template, and its unit, integration and end-to-end tests.
+16. **M16 Hardening:** TLS, rate limits, audit log, management port with Prometheus metrics, alert rules and Grafana dashboard, container image and Quadlet example, load tests.
 
 ## Open questions
 

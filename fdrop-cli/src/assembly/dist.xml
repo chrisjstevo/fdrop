@@ -1,7 +1,7 @@
 <assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 https://maven.apache.org/xsd/assembly-2.2.0.xsd">
-  <!-- the release archive: fdrop-cli-<version>/{fdrop, fdrop-cli.jar, README.md} -->
+  <!-- the release archive: fdrop-cli-<version>/{fdrop, fdrop-cli.jar, README.md, fdrop-watch@.service} -->
   <id>dist</id>
   <formats>
     <format>tar.gz</format>
@@ -17,6 +17,9 @@
     </file>
     <file>
       <source>src/main/dist/README.md</source>
+    </file>
+    <file>
+      <source>src/main/dist/fdrop-watch@.service</source>
     </file>
   </files>
 </assembly>

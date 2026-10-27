@@ -123,4 +123,36 @@ class CliProcessIT {
         Run bad = fdrop("upload", "--nonsense");
         assertThat(bad.code()).isEqualTo(CliException.USAGE);
     }
+
+    @Test
+    void watchRunsAsAServiceAndStopsCleanlyOnSigterm() throws Exception {
+        String jar = System.getProperty("fdrop.cli.jar");
+        Path outbox = Files.createDirectories(dir.resolve("outbox"));
+        List<String> cmd = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-jar", jar, "watch", outbox.toString(), "/home/", "--json", "--settle", "300ms"));
+        cmd.addAll(connection);
+        ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile())
+                .redirectError(dir.resolve("watch-err.txt").toFile()).redirectOutput(dir.resolve("watch-out.txt").toFile());
+        pb.environment().put("XDG_STATE_HOME", dir.resolve("state").toString());
+        Process p = pb.start();
+        try {
+            Files.writeString(outbox.resolve("dropped.csv"), "a,b\n1,2\n");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+            while (!Files.readString(dir.resolve("watch-err.txt")).contains("\"event\":\"uploaded\"")) {
+                assertThat(p.isAlive()).as(Files.readString(dir.resolve("watch-err.txt"))).isTrue();
+                assertThat(System.nanoTime()).as("the dropped file to be uploaded").isLessThan(deadline);
+                Thread.sleep(100);
+            }
+            // SIGTERM, as systemd stops it
+            p.destroy();
+            assertThat(p.waitFor(1, TimeUnit.MINUTES)).isTrue();
+            assertThat(p.exitValue()).isZero();
+        } finally {
+            p.destroyForcibly();
+        }
+        String log = Files.readString(dir.resolve("watch-err.txt"));
+        assertThat(log).contains("\"event\":\"started\"", "\"remote\":\"/home/dropped.csv\"",
+                "\"event\":\"stopped\"");
+        assertThat(app.files.stat(TestSupport.app("app-proc"), "/home/dropped.csv").size()).isEqualTo(8);
+    }
 }

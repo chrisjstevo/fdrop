@@ -41,12 +41,28 @@ class Uploader {
         };
     }
 
-    /** {@code expiresIn} is the canonical expiry to give the file, or null for the folder's default. */
+    /**
+     * {@code expiresIn} is the canonical expiry to give the file, or null for the folder's default.
+     * {@code unchanged}, when set, is asked just before completing whether the local file is still the one that was
+     * sent; if not, the session is aborted and {@link FileChanged} thrown.
+     */
     record Options(Path file, String remotePath, boolean overwrite, int parallel, Duration retryFor, boolean resume,
-                   String certFingerprint, String expiresIn) {
+                   String certFingerprint, String expiresIn, java.util.function.BooleanSupplier unchanged) {
+        Options(Path file, String remotePath, boolean overwrite, int parallel, Duration retryFor, boolean resume,
+                String certFingerprint, String expiresIn) {
+            this(file, remotePath, overwrite, parallel, retryFor, resume, certFingerprint, expiresIn, null);
+        }
+
         Options(Path file, String remotePath, boolean overwrite, int parallel, Duration retryFor, boolean resume,
                 String certFingerprint) {
-            this(file, remotePath, overwrite, parallel, retryFor, resume, certFingerprint, null);
+            this(file, remotePath, overwrite, parallel, retryFor, resume, certFingerprint, null, null);
+        }
+    }
+
+    /** The local file changed while it was being sent; its session was aborted. */
+    static final class FileChanged extends RuntimeException {
+        FileChanged(Path file) {
+            super(file + " changed while it was being uploaded", null, false, false);
         }
     }
 
@@ -121,6 +137,11 @@ class Uploader {
             }
             try {
                 sendMissing(o, session, size, received, conflicts, backoff);
+                if (o.unchanged() != null && !o.unchanged().getAsBoolean()) {
+                    abort(session);
+                    store.delete(key);
+                    throw new FileChanged(file);
+                }
                 JsonNode done = complete(session, sha256, received, backoff);
                 if (done != null) {
                     store.delete(key);

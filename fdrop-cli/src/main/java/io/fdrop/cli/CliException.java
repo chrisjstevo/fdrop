@@ -17,6 +17,8 @@ public final class CliException extends RuntimeException {
     public static final int GAVE_UP = 5;
     /** Assembly failed, hash mismatch, or an unexpected response. */
     public static final int SERVER = 6;
+    /** {@code watch}: another watcher runs with the same settings, or the watched folder went away. */
+    public static final int WATCH = 7;
 
     private final int code;
 

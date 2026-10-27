@@ -89,17 +89,42 @@ final class Settings implements CommandLine.IDefaultValueProvider {
         }
     }
 
+    /** {@code watch}'s two folders also come from these environment variables. */
+    static final Map<String, String> WATCH_ENV = Map.of(
+            "local-dir", "FDROP_WATCH_LOCAL_DIR",
+            "remote-dir", "FDROP_WATCH_REMOTE_DIR");
+
     @Override
     public String defaultValue(ArgSpec arg) {
         if (!(arg instanceof OptionSpec opt)) {
             return null;
         }
         String name = opt.longestName().replaceFirst("^--", "");
-        String var = ENV.get(name);
+        boolean watch = opt.command() != null && "watch".equals(opt.command().name());
+        String var = watch && WATCH_ENV.containsKey(name) ? WATCH_ENV.get(name) : ENV.get(name);
         if (var != null && env.get(var) != null && !env.get(var).isBlank()) {
             return env.get(var);
         }
+        // watch settings are watch.<camelCase> in the file (watch.localDir, watch.afterUpload), then the plain name
+        if (watch && file.getProperty("watch." + camel(name)) != null) {
+            return file.getProperty("watch." + camel(name));
+        }
         return file.getProperty(name);
+    }
+
+    /** {@code after-upload} → {@code afterUpload}. */
+    static String camel(String name) {
+        StringBuilder b = new StringBuilder();
+        boolean up = false;
+        for (char c : name.toCharArray()) {
+            if (c == '-') {
+                up = true;
+            } else {
+                b.append(up ? Character.toUpperCase(c) : c);
+                up = false;
+            }
+        }
+        return b.toString();
     }
 
     /** {@code 30s}, {@code 15m}, {@code 1h}, {@code 2d}. */

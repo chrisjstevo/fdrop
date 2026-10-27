@@ -156,7 +156,8 @@ public sealed class IntegrationTests : IDisposable
         string big = File("big.bin", (12 * MiB) + 123);
         var progress = new ConcurrentBag<long>();
         using var fdrop = Client("alice");
-        await fdrop.CreateDirectoryAsync(home, Ct);
+        Assert.True((await fdrop.CreateDirectoryAsync(home, Ct)).IsDirectory);
+        Assert.All((await fdrop.ListAsync("/", Ct)).Entries, e => Assert.True(e.IsDirectory));
         var f = await fdrop.UploadAsync(big, home + "/", new UploadOptions(ExpiresIn: "30 days", Progress: new SyncProgress(p => progress.Add(p.Acknowledged))), Ct);
         Assert.Equal(home + "/big.bin", f.Path);
         Assert.Equal(new FileInfo(big).Length, f.Size);

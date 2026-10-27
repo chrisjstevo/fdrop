@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Fdrop.Client;
 
 /// <summary>A file or directory in fdrop's virtual tree. Expiry is only set for files.</summary>
-/// <param name="Type"><c>FILE</c> or <c>DIRECTORY</c>.</param>
+/// <param name="Type"><c>FILE</c>, or for a directory <c>DIR</c>, <c>AREA</c> (such as <c>/home</c>), <c>SHARED_FOLDER</c> or <c>FORWARD_FOLDER</c>.</param>
 /// <param name="ExpirySource">Where the expiry came from: <c>upload</c>, <c>folderDefault</c>, <c>homeDefault</c>, …</param>
 public sealed record FileEntry(
     string Name,
@@ -19,7 +19,7 @@ public sealed record FileEntry(
 {
     /// <summary>Whether this is a directory.</summary>
     [JsonIgnore]
-    public bool IsDirectory => Type == "DIRECTORY";
+    public bool IsDirectory => Type != "FILE";
 }
 
 /// <summary>A directory's contents, and what an upload into it gets for expiry (null for files).</summary>

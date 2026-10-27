@@ -133,7 +133,8 @@ class FdropClientTest {
     void uploadsFromAStreamAndAnEmptyFile() throws Exception {
         byte[] data = Files.readAllBytes(file("s.bin", 6 * MIB));
         try (FdropClient fdrop = builder("alice").build()) {
-            fdrop.mkdir("/home/in");
+            assertThat(fdrop.mkdir("/home/in").isDirectory()).isTrue();
+            assertThat(fdrop.list("/").entries()).allMatch(FileEntry::isDirectory);
             FileEntry f = fdrop.upload(new ByteArrayInputStream(data), data.length, "/home/in/s.bin",
                     UploadOptions.DEFAULTS);
             assertThat(f.size()).isEqualTo(data.length);

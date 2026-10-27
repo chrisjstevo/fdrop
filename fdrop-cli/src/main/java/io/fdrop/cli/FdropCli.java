@@ -10,6 +10,13 @@ import picocli.CommandLine.ParentCommand;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.URI;
@@ -27,7 +34,7 @@ import java.util.concurrent.Callable;
  */
 @Command(name = "fdrop", mixinStandardHelpOptions = true, versionProvider = FdropCli.Version.class,
         description = "Uploads files to fdrop as an application account, with a client certificate.",
-        subcommands = {FdropCli.Upload.class, FdropCli.Whoami.class},
+        subcommands = {FdropCli.Upload.class, FdropCli.Watch.class, FdropCli.Whoami.class},
         exitCodeListHeading = "%nExit codes:%n",
         exitCodeList = {
                 "0:Uploaded, or whoami succeeded",
@@ -36,12 +43,18 @@ import java.util.concurrent.Callable;
                 "3:Target exists and --overwrite was not given",
                 "4:Not allowed: no write permission, method or source refused, quota exceeded",
                 "5:Gave up retrying; the session is kept for a later run",
-                "6:Server-side failure: assembly failed, hash mismatch or unexpected response"})
+                "6:Server-side failure: assembly failed, hash mismatch or unexpected response",
+                "7:watch: another watcher runs with the same settings, or the watched folder went away"})
 public final class FdropCli implements Callable<Integer> {
 
     /** What a run needs from its surroundings; tests supply their own. */
     record Context(Map<String, String> env, PrintStream out, PrintStream err, Backoff.Clock clock, boolean terminal,
-                   Path stateDir, boolean installShutdownHook) {
+                   Path stateDir, boolean installShutdownHook, java.util.function.Consumer<Runnable> onWatchStop) {
+
+        Context(Map<String, String> env, PrintStream out, PrintStream err, Backoff.Clock clock, boolean terminal,
+                Path stateDir, boolean installShutdownHook) {
+            this(env, out, err, clock, terminal, stateDir, installShutdownHook, null);
+        }
     }
 
     private final Context ctx;
@@ -266,6 +279,235 @@ public final class FdropCli implements Callable<Integer> {
                         + (r.path().startsWith("/forward/") ? "; queued for forwarding" : ""));
             }
             return CliException.OK;
+        }
+    }
+
+    @Command(name = "watch", mixinStandardHelpOptions = true,
+            description = {"Listens to one local folder and uploads each new file into one folder on the server,"
+                    + " until stopped.",
+                    "Example: fdrop watch /srv/outbox /shared/finance/incoming/ --recursive"})
+    static final class Watch implements Callable<Integer> {
+        @ParentCommand
+        FdropCli parent;
+
+        @Mixin
+        Connection connection;
+
+        @Parameters(index = "0", arity = "0..1", paramLabel = "LOCAL-DIR",
+                description = "The local folder to listen to (or --local-dir)")
+        Path localArg;
+
+        @Parameters(index = "1", arity = "0..1", paramLabel = "REMOTE-DIR",
+                description = "The server folder to upload into, ending in /, e.g. /shared/finance/incoming/ (or"
+                        + " --remote-dir)")
+        String remoteArg;
+
+        @Option(names = "--local-dir", paramLabel = "DIR",
+                description = "The local folder to listen to ($FDROP_WATCH_LOCAL_DIR)")
+        Path localDir;
+
+        @Option(names = "--remote-dir", paramLabel = "DIR",
+                description = "The server folder to upload into, ending in / ($FDROP_WATCH_REMOTE_DIR)")
+        String remoteDir;
+
+        @Option(names = "--recursive", description = "Watch subfolders too, keeping their structure on the server")
+        boolean recursive;
+
+        @Option(names = "--include", paramLabel = "GLOB", split = ",",
+                description = "Only upload files whose name or relative path matches; repeatable")
+        List<String> include = new ArrayList<>();
+
+        @Option(names = "--ignore", paramLabel = "GLOB", split = ",",
+                description = "Never upload matching files; repeatable, replaces the defaults (hidden files and"
+                        + " *.tmp, *.part, *.partial, *.crdownload, *~)")
+        List<String> ignore;
+
+        @Option(names = "--settle", paramLabel = "DURATION", defaultValue = "10s",
+                description = "How long size and modified time must stay the same (default ${DEFAULT-VALUE})")
+        String settle;
+
+        @Option(names = "--ready-marker", paramLabel = "SUFFIX",
+                description = "Upload a file only when <name><SUFFIX> exists, e.g. .done")
+        String readyMarker;
+
+        @Option(names = "--after-upload", paramLabel = "ACTION", defaultValue = "keep",
+                description = "keep, delete or move=<dir> (default ${DEFAULT-VALUE})")
+        String afterUpload;
+
+        @Option(names = "--on-failure", paramLabel = "ACTION", defaultValue = "keep",
+                description = "For files the server refuses: keep or move=<dir> (default ${DEFAULT-VALUE})")
+        String onFailure;
+
+        @Option(names = "--max-files", paramLabel = "N", defaultValue = "2",
+                description = "Files uploaded at once, 1 to 8 (default ${DEFAULT-VALUE})")
+        int maxFiles;
+
+        @Option(names = "--rescan", paramLabel = "DURATION", defaultValue = "5m",
+                description = "Full scan interval, to catch missed events (default ${DEFAULT-VALUE})")
+        String rescan;
+
+        @Option(names = "--poll", paramLabel = "DURATION",
+                description = "Only scan, every DURATION, without file system events (network file systems)")
+        String poll;
+
+        @Option(names = "--status-file", paramLabel = "FILE", description = "Where to write the status JSON")
+        Path statusFile;
+
+        @Option(names = "--shutdown-timeout", paramLabel = "DURATION", defaultValue = "30s",
+                description = "How long uploads may finish after a stop signal (default ${DEFAULT-VALUE})")
+        String shutdownTimeout;
+
+        @Option(names = "--overwrite", description = "Replace existing files on the server")
+        boolean overwrite;
+
+        @Option(names = "--expires-in", paramLabel = "EXPIRY",
+                description = "Delete each file this long after it arrives; without it the folder's default applies")
+        String expiresIn;
+
+        @Option(names = "--parallel", paramLabel = "N", defaultValue = "3",
+                description = "Chunks of one file sent at once, 1 to 8 (default ${DEFAULT-VALUE})")
+        int parallel;
+
+        @Option(names = "--retry-for", paramLabel = "DURATION", defaultValue = "1h",
+                description = "How long one upload keeps retrying network errors (default ${DEFAULT-VALUE})")
+        String retryFor;
+
+        @Option(names = "--json", description = "Log one JSON object per line")
+        boolean json;
+
+        /** Set while running, so a signal can stop it. */
+        volatile Watcher watcher;
+
+        @Override
+        public Integer call() throws InterruptedException {
+            Context ctx = parent.ctx;
+            WatchConfig cfg = config();
+            Credentials creds = connection.credentials();
+            Api api = new Api(connection.url == null ? missingUrl() : connection.url, Tls.context(creds, connection.ca),
+                    "fdrop-cli/" + version().split(" ")[0] + " (watch)");
+            checkServer(api, cfg.remoteDir());
+
+            Path state = ctx.stateDir().resolveSibling("watch").resolve(watchId(api, creds, cfg));
+            try {
+                Files.createDirectories(state, PosixFilePermissions.asFileAttribute(
+                        PosixFilePermissions.fromString("rwx------")));
+            } catch (IOException e) {
+                throw new CliException(CliException.USAGE, "cannot create " + state + ": " + e.getMessage());
+            }
+            WatchLog log = new WatchLog(ctx.err(), json);
+            Uploader uploader = new Uploader(api, new SessionStore(ctx.stateDir()), ctx.clock(), new Random(),
+                    Uploader.Progress.NONE);
+            Watcher.Uploads uploads = new Watcher.Uploads() {
+                @Override
+                public Uploader.Result upload(Path file, String remotePath, BooleanSupplier unchanged)
+                        throws InterruptedException {
+                    return uploader.upload(new Uploader.Options(file, remotePath, cfg.overwrite(), cfg.parallel(),
+                            cfg.retryFor(), true, creds.fingerprint(), cfg.expiresIn(), unchanged));
+                }
+
+                @Override
+                public void mkdir(String remotePath) {
+                    Api.Reply r;
+                    try {
+                        r = api.call("POST", "/api/v1/files/mkdir", Map.of("path", remotePath));
+                    } catch (Api.Retryable e) {
+                        throw new CliException(CliException.GAVE_UP, "cannot create " + remotePath + ": "
+                                + e.getMessage());
+                    }
+                    if (r.status() != 409) {
+                        Api.expect(r, "creating " + remotePath);
+                    }
+                }
+            };
+            try (WatchLock lock = WatchLock.acquire(state.resolve("lock"));
+                 WatchLedger ledger = new WatchLedger(state.resolve("ledger.jsonl"), cfg.localDir())) {
+                watcher = new Watcher(cfg, uploads, ledger, log, ctx.clock());
+                if (ctx.onWatchStop() != null) {
+                    ctx.onWatchStop().accept(watcher::stop);
+                } else if (ctx.installShutdownHook()) {
+                    Signals.onStop(watcher::stop);
+                }
+                watcher.run();
+            }
+            return CliException.OK;
+        }
+
+        private static URI missingUrl() {
+            throw new CliException(CliException.USAGE, "--url is required (or $FDROP_URL)");
+        }
+
+        WatchConfig config() {
+            if (localArg != null && localDir != null && !localArg.equals(localDir)) {
+                throw new CliException(CliException.USAGE, "the local folder is given twice, as " + localArg + " and"
+                        + " --local-dir " + localDir);
+            }
+            if (remoteArg != null && remoteDir != null && !remoteArg.equals(remoteDir)) {
+                throw new CliException(CliException.USAGE, "the server folder is given twice, as " + remoteArg
+                        + " and --remote-dir " + remoteDir);
+            }
+            return WatchConfig.check(localArg != null ? localArg : localDir, remoteArg != null ? remoteArg : remoteDir,
+                    recursive, include, ignore == null ? WatchConfig.DEFAULT_IGNORE : ignore, Settings.duration(settle),
+                    readyMarker, WatchConfig.Action.parse("--after-upload", afterUpload, true),
+                    WatchConfig.Action.parse("--on-failure", onFailure, false), maxFiles, Settings.duration(rescan),
+                    poll == null ? null : Settings.duration(poll), statusFile, Settings.duration(shutdownTimeout),
+                    overwrite, expiresIn == null ? null : ExpirySyntax.canonical(expiresIn), parallel,
+                    Settings.duration(retryFor));
+        }
+
+        /** The certificate works, and the server folder exists, is a folder and the account may write to it. */
+        private static void checkServer(Api api, String remote) {
+            String folder = remote.length() > 1 ? remote.substring(0, remote.length() - 1) : remote;
+            Api.Reply r;
+            try {
+                api.get("/api/v1/me");
+                r = api.call("GET", "/api/v1/files?path=" + URLEncoder.encode(folder, StandardCharsets.UTF_8), null);
+            } catch (Api.Retryable e) {
+                throw new CliException(CliException.GAVE_UP, "cannot reach " + api.base() + ": " + e.getMessage());
+            }
+            if (r.status() == 404 || r.status() == 403) {
+                throw new CliException(CliException.NOT_ALLOWED, "cannot upload into " + remote + ": " + r.detail());
+            }
+            com.fasterxml.jackson.databind.JsonNode self = Api.expect(r, "checking " + remote).path("self");
+            // AREA (/home), DIR, SHARED_FOLDER and FORWARD_FOLDER are all folders
+            if ("FILE".equals(self.path("type").asText("FILE"))) {
+                throw new CliException(CliException.NOT_ALLOWED, remote + " is not a folder on the server");
+            }
+            if (!self.path("writable").asBoolean(false)) {
+                throw new CliException(CliException.NOT_ALLOWED, "this account cannot write to " + remote);
+            }
+        }
+
+        /** The state folder's name: these settings, so another pair of folders gets its own ledger and lock. */
+        private static String watchId(Api api, Credentials creds, WatchConfig cfg) {
+            return SessionStore.key(api.base().toString(), creds.fingerprint(), cfg.localDir().toString(),
+                    0, 0, cfg.remoteDir()).substring(0, 24);
+        }
+    }
+
+    /** {@code SIGTERM} and {@code SIGINT} stop a watch cleanly, so it exits 0 rather than being killed. */
+    static final class Signals {
+        private Signals() {
+        }
+
+        /** Through {@code sun.misc.Signal}, found reflectively: there is no public API for handling a signal. */
+        static void onStop(Runnable stop) {
+            try {
+                Class<?> signal = Class.forName("sun.misc.Signal");
+                Class<?> handler = Class.forName("sun.misc.SignalHandler");
+                Object h = java.lang.reflect.Proxy.newProxyInstance(handler.getClassLoader(), new Class<?>[]{handler},
+                        (proxy, method, args) -> {
+                            if (method.getName().equals("handle")) {
+                                stop.run();
+                            }
+                            return null;
+                        });
+                for (String name : new String[]{"TERM", "INT"}) {
+                    signal.getMethod("handle", signal, handler)
+                            .invoke(null, signal.getConstructor(String.class).newInstance(name), h);
+                }
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                // no signal handling here: a stop signal ends the process without the clean stop
+            }
         }
     }
 
