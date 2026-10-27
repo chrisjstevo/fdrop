@@ -23,6 +23,7 @@
     <module>fdrop-cli</module>
     <module>fdrop-http-client-java</module>
     <module>fdrop-http-client-dotnet</module>
+    <module>fdrop-kubernetes</module>
   </modules>
 
   <properties>

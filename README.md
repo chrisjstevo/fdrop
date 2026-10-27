@@ -24,6 +24,7 @@ The full specification is in [SPEC.md](SPEC.md).
 | `fdrop-server` | `Main`, the shaded fat jar and the container image (Jib) |
 | `fdrop-cli` | `fdrop`, the command line client: `fdrop-cli.jar` and a release `.tar.gz` |
 | `fdrop-http-client-java` | A Java client library for the REST API; uploads are resumable and chunked underneath |
+| `fdrop-kubernetes` | Reference Kubernetes deployment in OpenTofu: fdrop, Garage (S3 on local disks), PostgreSQL, Keycloak, Traefik |
 | `fdrop-http-client-dotnet` | The same client for .NET 10 (NuGet package `Fdrop.Client`), built by Maven with the dotnet CLI |
 
 `deploy/` has an example production config, Prometheus scrape config and alert rules, a Grafana dashboard, a
@@ -339,6 +340,13 @@ held in memory while it is sent.
 [README](fdrop-http-client-dotnet/README.md). `./mvnw verify` builds it with the .NET 10 SDK (in the dev container) and
 runs its tests against a real fdrop server; `-Ddotnet.skip` skips it on machines without the SDK.
 
+## Kubernetes
+
+[fdrop-kubernetes](fdrop-kubernetes/README.md) deploys fdrop with everything it needs, applied with OpenTofu, whose
+encrypted state keeps the secrets it generates. `./mvnw verify` checks it and runs its mocked `tofu test` suites (the
+build fetches the pinned OpenTofu when it is not installed; `-Dtofu.skip` skips them). To try it on a local kind cluster, see
+[environments/kind](fdrop-kubernetes/environments/kind/README.md).
+
 ## Configuration
 
 `fdrop.yaml` (or `$FDROP_CONFIG`); every key can be overridden with an environment variable named after its path,
@@ -399,3 +407,8 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 - Client libraries: `FileEntry.isDirectory` (Java) and `IsDirectory` (.NET) now treat every type but `FILE` as a
   folder; they had looked for a `DIRECTORY` type that fdrop never sends (it sends `DIR`, `AREA`, `SHARED_FOLDER`
   and `FORWARD_FOLDER`).
+- Kubernetes (`fdrop-kubernetes`): Traefik replaces the spec's first choice of ingress-nginx, which the Kubernetes
+  project retired in March 2026. The `keycloak` namespace enforces Pod Security `baseline`, not `restricted`, because
+  the Keycloak operator's pods do not meet `restricted`. Keycloak client secrets are not rotated by the realm import
+  (it only creates realms); see the module README. The kind environment uses host ports 18443, 18444 and 12222, as an
+  IDE usually holds 8443, 8444 and 2222 for the dev container.

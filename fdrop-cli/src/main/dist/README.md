@@ -1,4 +1,4 @@
-# fdrop command line client
+100# fdrop command line client
 
 `fdrop` uploads files to fdrop unattended, signed in as an application account with a client certificate. It
 needs Java 21 or later.

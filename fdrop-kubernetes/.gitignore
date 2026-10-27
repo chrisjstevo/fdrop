@@ -1,0 +1,9 @@
+# provider downloads and local state; the lock files (.terraform.lock.hcl) are committed
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+# written by the kind walk-through and the end-to-end test
+environments/kind/ca.pem
+environments/kind/kubeconfig
+e2e/work/
