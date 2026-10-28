@@ -1,4 +1,5 @@
-# Default deny, then only: fdrop to the S3 API, Garage to itself (RPC), the setup Job and Prometheus to the admin API.
+# Default deny, then only: fdrop to the S3 API, Garage to itself (RPC), the setup Job and Prometheus to the admin API,
+# all HTTPS through the sidecars; Garage's own HTTP ports listen on 127.0.0.1 only.
 resource "kubernetes_network_policy_v1" "default_deny" {
   metadata {
     name      = "default-deny"
@@ -27,7 +28,7 @@ resource "kubernetes_network_policy_v1" "garage" {
         }
       }
       ports {
-        port     = "3900"
+        port     = "3443"
         protocol = "TCP"
       }
     }
@@ -54,7 +55,7 @@ resource "kubernetes_network_policy_v1" "garage" {
         }
       }
       ports {
-        port     = "3903"
+        port     = "3943"
         protocol = "TCP"
       }
     }
@@ -108,7 +109,7 @@ resource "kubernetes_network_policy_v1" "setup" {
         }
       }
       ports {
-        port     = "3903"
+        port     = "3943"
         protocol = "TCP"
       }
     }

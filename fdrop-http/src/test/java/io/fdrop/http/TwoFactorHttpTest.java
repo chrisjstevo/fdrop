@@ -33,19 +33,18 @@ class TwoFactorHttpTest {
     Fdrop app;
     HttpServer server;
     FakeDirectory directory = new FakeDirectory();
-    HttpClient http = HttpClient.newHttpClient();
+    HttpClient http = TestSupport.httpClient();
     String base;
 
     void start(String require) throws Exception {
         FdropConfig cfg = TestSupport.config();
         cfg.http.port = 0;
         cfg.auth.twoFactor.require = require;
-        cfg.auth.session.secureCookie = false;
         LocalStorageBackend b = new LocalStorageBackend();
         b.init(dir);
         app = TestSupport.fdrop(cfg, b, directory);
         server = new HttpServer(app).start();
-        base = "http://localhost:" + server.port();
+        base = "https://localhost:" + server.port();
     }
 
     @AfterEach

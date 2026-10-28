@@ -2,7 +2,6 @@
 
 mock_provider "kubernetes" {}
 mock_provider "kubectl" {}
-mock_provider "random" {}
 
 variables {
   namespace        = "fdrop"
@@ -11,10 +10,11 @@ variables {
   mtls_hostname    = "apps.example.com"
   public_issuer    = "letsencrypt"
   oidc_issuer      = "https://auth.example.com/realms/fdrop"
+  internal_ca      = "-----BEGIN CERTIFICATE-----\ninternal\n-----END CERTIFICATE-----\n"
   db_host          = "fdrop-db-rw.fdrop-db.svc"
   db_client_secret = "fdrop-db-client"
   s3 = {
-    endpoint  = "http://garage.fdrop-objectstore.svc:3900"
+    endpoint  = "https://garage.fdrop-objectstore.svc:3443"
     bucket    = "fdrop"
     region    = "garage"
     namespace = "fdrop-objectstore"
@@ -87,8 +87,20 @@ run "files_go_to_garage_and_the_db_needs_a_certificate" {
     error_message = "fdrop stores files in S3"
   }
   assert {
-    condition     = yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).storage.s3.endpointOverride == "http://garage.fdrop-objectstore.svc:3900"
+    condition     = yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).storage.s3.endpointOverride == "https://garage.fdrop-objectstore.svc:3443"
     error_message = "the S3 endpoint is the in-cluster Garage store"
+  }
+  assert {
+    condition = (yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).storage.s3.trustedCas == "/etc/fdrop/internal-ca/ca.crt"
+    && strcontains(kubernetes_config_map_v1.internal_ca.data["ca.crt"], "internal"))
+    error_message = "Garage's TLS sidecar is checked against the internal CA, and only for S3 calls"
+  }
+  assert {
+    condition = anytrue([
+      for e in kubernetes_network_policy_v1.fdrop.spec[0].egress :
+      anytrue([for t in e.to : try(t.namespace_selector[0].match_labels["kubernetes.io/metadata.name"], "") == "fdrop-objectstore"]) && e.ports[0].port == "3443"
+    ])
+    error_message = "fdrop may reach Garage's TLS port"
   }
   assert {
     condition     = yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).db.tls.mode == "verify-full"
@@ -174,6 +186,44 @@ run "storage_must_be_the_in_cluster_store" {
   expect_failures = [var.s3]
 }
 
+run "storage_is_never_plain_http" {
+  command = plan
+
+  variables {
+    s3 = { endpoint = "http://garage.fdrop-objectstore.svc:3900", bucket = "x", region = "garage", namespace = "x" }
+  }
+  expect_failures = [var.s3]
+}
+
+run "every_port_is_https" {
+  command = plan
+
+  assert {
+    condition     = !can(yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).http.tls.enabled)
+    error_message = "TLS has no off switch"
+  }
+  assert {
+    condition = alltrue([
+      for p in ["startupProbe", "livenessProbe", "readinessProbe"] :
+      yamldecode(kubectl_manifest.statefulset.yaml_body).spec.template.spec.containers[0][p].httpGet.scheme == "HTTPS"
+    ])
+    error_message = "the kubelet probes the management port over HTTPS"
+  }
+  assert {
+    condition     = yamldecode(kubectl_manifest.service_monitor[0].yaml_body).spec.endpoints[0].scheme == "https"
+    error_message = "Prometheus scrapes over HTTPS"
+  }
+}
+
+run "a_public_ca_is_trusted_from_the_jdk_unless_asked" {
+  command = plan
+
+  assert {
+    condition     = !can(yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).auth.oidc.trustedCas)
+    error_message = "with a real public CA, Keycloak's certificate is checked against the JDK's CAs alone"
+  }
+}
+
 run "a_self_signed_ca_is_trusted_only_when_asked" {
   command = plan
 
@@ -182,9 +232,17 @@ run "a_self_signed_ca_is_trusted_only_when_asked" {
   }
 
   assert {
+    condition     = yamldecode(kubernetes_config_map_v1.config.data["fdrop.yaml"]).auth.oidc.trustedCas == "/etc/fdrop/tls/ca.crt"
+    error_message = "with trust_public_ca, fdrop trusts the issuing CA for Keycloak"
+  }
+  assert {
     condition = length([
       for e in yamldecode(kubectl_manifest.statefulset.yaml_body).spec.template.spec.containers[0].env : e if e.name == "JAVA_TOOL_OPTIONS"
-    ]) == 1
-    error_message = "with trust_public_ca, fdrop's JVM trusts the issuing CA"
+    ]) == 0
+    error_message = "the JVM's own trust store is left alone"
+  }
+  assert {
+    condition     = yamldecode(kubectl_manifest.service_monitor[0].yaml_body).spec.endpoints[0].tlsConfig.ca.secret.key == "ca.crt"
+    error_message = "Prometheus trusts the same CA"
   }
 }

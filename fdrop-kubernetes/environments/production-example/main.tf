@@ -115,6 +115,7 @@ module "fdrop" {
   hostname         = local.fdrop_host
   mtls_hostname    = local.mtls_host
   public_issuer    = "letsencrypt"
+  internal_ca      = module.platform.internal_ca.certificate
   oidc_issuer      = module.keycloak.issuer
   two_factor       = "admins"
   db_host          = module.postgres.fdrop_host

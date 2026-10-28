@@ -40,9 +40,14 @@ variable "public_issuer" {
 }
 
 variable "trust_public_ca" {
-  description = "Have fdrop and Traefik trust the public issuer's CA (a self-signed one, on kind); off with a real CA."
+  description = "Have fdrop (for Keycloak's public URL), Traefik and Prometheus trust the public issuer's CA (a self-signed one, on kind); off with a real CA."
   type        = bool
   default     = false
+}
+
+variable "internal_ca" {
+  description = "The internal CA's certificate (PEM), which fdrop trusts for Garage's TLS sidecars (storage.s3.trustedCas)."
+  type        = string
 }
 
 variable "oidc_issuer" {
@@ -80,8 +85,8 @@ variable "s3" {
   })
 
   validation {
-    condition     = strcontains(var.s3.endpoint, ".svc:")
-    error_message = "fdrop's storage is the in-cluster Garage object store; give its service endpoint."
+    condition     = can(regex("^https://[^/]+\\.svc:[0-9]+$", var.s3.endpoint))
+    error_message = "fdrop's storage is the in-cluster Garage object store over HTTPS; give its service endpoint, https://<service>.<namespace>.svc:<port>."
   }
 }
 

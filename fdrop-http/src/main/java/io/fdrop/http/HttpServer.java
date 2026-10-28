@@ -25,21 +25,13 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpServerExpectContinueHandler;
 import io.netty.handler.codec.http.HttpServerKeepAliveHandler;
-import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.X509TrustManager;
-import java.io.File;
 import java.net.InetSocketAddress;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -57,16 +49,11 @@ public final class HttpServer implements AutoCloseable {
     private final Authenticator auth;
     private final TrustedProxies proxies;
     private final StaticFiles statics;
-    private final ScheduledExecutorService tlsReloader = Executors.newSingleThreadScheduledExecutor(
-            Thread.ofPlatform().name("tls-reload").daemon().factory());
+    private ServerTls tls;
     private EventLoopGroup boss;
     private EventLoopGroup workers;
     private Channel channel;
     private Channel mtlsChannel;
-    private volatile SslContext ssl;
-    private volatile SslContext mtlsSsl;
-    private long certModified;
-    private long keyModified;
 
     public HttpServer(Fdrop app) {
         this.app = app;
@@ -75,7 +62,7 @@ public final class HttpServer implements AutoCloseable {
         this.writer = new ResponseWriter(app.metrics);
         this.auth = new Authenticator(app, sessions);
         this.proxies = new TrustedProxies(app.config.http.trustedProxies);
-        this.statics = new StaticFiles(app.config.http.tls.enabled);
+        this.statics = new StaticFiles();
         new AuthRoutes(app, sessions).register(router);
         new AccountApi(app).register(router);
         new FilesApi(app).register(router);
@@ -105,15 +92,12 @@ public final class HttpServer implements AutoCloseable {
 
     public HttpServer start() throws Exception {
         FdropConfig.Http cfg = app.config.http;
-        if (cfg.tls.enabled || cfg.mtls.enabled) {
-            reloadTls();
-            tlsReloader.scheduleWithFixedDelay(this::reloadTlsQuietly, 60, 60, TimeUnit.SECONDS);
-        }
+        tls = new ServerTls(cfg.tls);
         boss = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         workers = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
         new NettyAllocatorMetrics(PooledByteBufAllocator.DEFAULT).bindTo(app.metrics.registry());
         channel = bootstrap(false).bind(cfg.bind, cfg.port).sync().channel();
-        log.info("HTTP{} listening on {}:{}", cfg.tls.enabled ? "S" : "", cfg.bind, port());
+        log.info("HTTPS listening on {}:{}", cfg.bind, port());
         if (cfg.mtls.enabled) {
             mtlsChannel = bootstrap(true).bind(cfg.mtls.bind, cfg.mtls.port).sync().channel();
             log.info("HTTPS for application client certificates listening on {}:{}", cfg.mtls.bind, mtlsPort());
@@ -122,7 +106,7 @@ public final class HttpServer implements AutoCloseable {
     }
 
     /**
-     * The main listener, or the application listener: always TLS, client certificate required, API only. Its
+     * The main listener, or the application listener (client certificate required, API only); both TLS only. The
      * handshake accepts any client certificate; {@code AppAccountService} then decides whether a pinned
      * fingerprint or a trusted CA and subject match, so an unknown certificate gets the same 401 as a wrong one.
      */
@@ -135,10 +119,8 @@ public final class HttpServer implements AutoCloseable {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        SslContext current = mtls ? mtlsSsl : ssl;
-                        if (current != null) {
-                            ch.pipeline().addLast("tls", current.newHandler(ch.alloc()));
-                        }
+                        SslContext current = mtls ? tls.mtls() : tls.server();
+                        ch.pipeline().addLast("tls", current.newHandler(ch.alloc()));
                         ch.pipeline().addLast("count", new ConnectionCounter());
                         ch.pipeline().addLast("codec", new HttpServerCodec(4096, 16 * 1024, 64 * 1024));
                         ch.pipeline().addLast("keepalive", new HttpServerKeepAliveHandler());
@@ -148,56 +130,6 @@ public final class HttpServer implements AutoCloseable {
                                 statics, mtls));
                     }
                 });
-    }
-
-    private void reloadTlsQuietly() {
-        try {
-            reloadTls();
-        } catch (Exception e) {
-            log.warn("TLS reload failed, keeping the previous certificate: {}", e.toString());
-        }
-    }
-
-    private synchronized void reloadTls() throws Exception {
-        File cert = new File(app.config.http.tls.cert);
-        File key = new File(app.config.http.tls.key);
-        if (ssl != null && cert.lastModified() == certModified && key.lastModified() == keyModified) {
-            return;
-        }
-        if (app.config.http.tls.enabled) {
-            ssl = SslContextBuilder.forServer(cert, key).protocols("TLSv1.3", "TLSv1.2").build();
-        }
-        if (app.config.http.mtls.enabled) {
-            mtlsSsl = SslContextBuilder.forServer(cert, key).protocols("TLSv1.3", "TLSv1.2")
-                    .clientAuth(ClientAuth.REQUIRE).trustManager(new AnyClientCertificate()).build();
-        }
-        certModified = cert.lastModified();
-        keyModified = key.lastModified();
-        log.info("loaded TLS certificate {}", cert);
-    }
-
-    /**
-     * Completes the handshake for any client certificate the client proves it holds the key for; which ones are
-     * accepted is decided per request against the registered certificates. No CA list is sent, because clients
-     * such as Java's then refuse to offer a pinned self-signed certificate.
-     */
-    private final class AnyClientCertificate implements X509TrustManager {
-        @Override
-        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-            if (chain == null || chain.length == 0) {
-                throw new CertificateException("a client certificate is required");
-            }
-        }
-
-        @Override
-        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-            throw new CertificateException("not a client");
-        }
-
-        @Override
-        public X509Certificate[] getAcceptedIssuers() {
-            return new X509Certificate[0];
-        }
     }
 
     /** Keeps {@code fdrop_http_connections_active} up to date. */
@@ -223,7 +155,9 @@ public final class HttpServer implements AutoCloseable {
         if (mtlsChannel != null) {
             mtlsChannel.close().syncUninterruptibly();
         }
-        tlsReloader.shutdownNow();
+        if (tls != null) {
+            tls.close();
+        }
         if (workers != null) {
             workers.shutdownGracefully(0, grace.toMillis(), TimeUnit.MILLISECONDS).syncUninterruptibly();
         }

@@ -1,10 +1,11 @@
 # Garage setup, run by the garage-setup Job (sh with curl; no jq). Safe to run again: each step checks first.
+# The admin API is HTTPS (the ghostunnel sidecar), checked against the internal CA in $CA.
 set -eu
 api() { # api METHOD ENDPOINT [JSON]
   if [ $# -gt 2 ]; then
-    curl -sS -o /tmp/out -w '%{http_code}' -X "$1" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$3" "$GARAGE/v2/$2"
+    curl -sS --cacert "$CA" -o /tmp/out -w '%{http_code}' -X "$1" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$3" "$GARAGE/v2/$2"
   else
-    curl -sS -o /tmp/out -w '%{http_code}' -X "$1" -H "Authorization: Bearer $TOKEN" "$GARAGE/v2/$2"
+    curl -sS --cacert "$CA" -o /tmp/out -w '%{http_code}' -X "$1" -H "Authorization: Bearer $TOKEN" "$GARAGE/v2/$2"
   fi
 }
 field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p" /tmp/out | head -n 1; }

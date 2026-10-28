@@ -92,23 +92,6 @@ public final class Ctx {
         return connection;
     }
 
-    /**
-     * True when the client's connection was encrypted: TLS here, or TLS a trusted proxy terminated and reported
-     * with {@code X-Forwarded-Proto} or {@code Forwarded: proto=https}.
-     */
-    boolean secure() {
-        if (connection.tls()) {
-            return true;
-        }
-        if (!connection.trustedPeer()) {
-            return false;
-        }
-        String xfp = header("X-Forwarded-Proto");
-        String fwd = header("Forwarded");
-        return (xfp != null && xfp.trim().equalsIgnoreCase("https"))
-                || (fwd != null && fwd.toLowerCase(java.util.Locale.ROOT).contains("proto=https"));
-    }
-
     public String param(String name) {
         String v = pathParams.get(name);
         if (v == null) {

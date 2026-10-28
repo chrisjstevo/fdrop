@@ -10,6 +10,8 @@ resource "kubectl_manifest" "service_monitor" {
         port          = "admin"
         path          = "/metrics"
         interval      = "30s"
+        scheme        = "https"
+        tlsConfig     = { ca = { secret = { name = "garage-tls", key = "ca.crt" } }, serverName = local.service_names[0] }
         authorization = { credentials = { name = "garage", key = "metrics-token" } }
       }]
     }

@@ -2,7 +2,7 @@
 http:
   # HTTPS only: nothing listens on plain HTTP. The certificates are made by the `certs` service of compose.yaml.
   port: 8443
-  tls: { enabled: true, cert: .devcontainer/certs/server.crt, key: .devcontainer/certs/server.key }
+  tls: { cert: .devcontainer/certs/server.crt, key: .devcontainer/certs/server.key }
   mtls: { enabled: true, port: 8444 }
 management:
   port: 8081
@@ -13,7 +13,9 @@ sftp:
   spoolDir: ./data/spool
 auth:
   oidc:
-    issuer: ${FDROP_AUTH_OIDC_ISSUER:-http://localhost:8180/realms/fdrop}
+    issuer: ${FDROP_AUTH_OIDC_ISSUER:-https://localhost:8180/realms/fdrop}
+    # dev Keycloak serves HTTPS with the dev CA's localhost certificate
+    trustedCas: .devcontainer/certs/ca.crt
     webClientSecret: ${FDROP_AUTH_OIDC_WEBCLIENTSECRET:-fdrop-web-dev-secret}
     sftpClientSecret: ${FDROP_AUTH_OIDC_SFTPCLIENTSECRET:-fdrop-sftp-dev-secret}
   applications:

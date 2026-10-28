@@ -30,6 +30,50 @@ resource "helm_release" "cert_manager" {
   })]
 }
 
+# The internal CA: certificates for the hops inside the cluster (Keycloak behind Traefik, Garage's TLS sidecars), so
+# no service is called over plain HTTP (see "Security" in SPEC.md). OpenTofu makes the CA, as its certificate must also
+# reach fdrop's configuration; the key stays in the encrypted state and in cert-manager's namespace. A new CA is made
+# by the first apply in its last year; cert-manager then reissues the certificates it signs as they renew.
+resource "tls_private_key" "internal_ca" {
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P256"
+}
+
+resource "tls_self_signed_cert" "internal_ca" {
+  private_key_pem       = tls_private_key.internal_ca.private_key_pem
+  is_ca_certificate     = true
+  validity_period_hours = 87600 # 10 years
+  early_renewal_hours   = 8760
+  allowed_uses          = ["cert_signing", "crl_signing", "digital_signature"]
+  subject {
+    common_name  = "fdrop internal CA"
+    organization = "fdrop"
+  }
+}
+
+resource "kubernetes_secret_v1" "internal_ca" {
+  metadata {
+    name      = "fdrop-internal-ca"
+    namespace = var.cert_manager_namespace
+  }
+  type = "kubernetes.io/tls"
+  data = {
+    "tls.crt" = tls_self_signed_cert.internal_ca.cert_pem
+    "tls.key" = tls_private_key.internal_ca.private_key_pem
+  }
+  depends_on = [helm_release.cert_manager]
+}
+
+resource "kubectl_manifest" "internal_issuer" {
+  yaml_body = yamlencode({
+    apiVersion = "cert-manager.io/v1"
+    kind       = "ClusterIssuer"
+    metadata   = { name = "fdrop-internal-ca" }
+    spec       = { ca = { secretName = "fdrop-internal-ca" } }
+  })
+  depends_on = [kubernetes_secret_v1.internal_ca]
+}
+
 resource "helm_release" "cloudnative_pg" {
   count            = var.cloudnative_pg ? 1 : 0
   name             = "cnpg"

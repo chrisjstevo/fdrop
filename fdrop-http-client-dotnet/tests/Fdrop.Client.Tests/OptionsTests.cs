@@ -22,9 +22,9 @@ public sealed class OptionsTests : IDisposable
 
         Assert.Contains("BaseAddress is required", Fails(new FdropClientOptions()), StringComparison.Ordinal);
         Assert.Contains("https://", Fails(new FdropClientOptions { BaseAddress = new Uri("http://fdrop.example.com") }), StringComparison.Ordinal);
-        Assert.Contains("plain HTTP", Fails(new FdropClientOptions
+        Assert.Contains("HTTPS only", Fails(new FdropClientOptions
         {
-            BaseAddress = new Uri("http://localhost:1"), AllowPlainHttp = true, BasicUsername = "app", BasicPassword = "pw",
+            BaseAddress = new Uri("http://localhost:1"), BasicUsername = "app", BasicPassword = "pw",
         }), StringComparison.Ordinal);
         Assert.Contains("give one of", Fails(new FdropClientOptions
         {

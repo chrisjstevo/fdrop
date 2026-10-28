@@ -37,8 +37,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * The management port (default 8081): {@code /metrics} for Prometheus, {@code /healthz} for liveness and
- * {@code /readyz} for readiness. Its own small listener, so busy user traffic cannot starve scrapes. Must never be
- * published to the internet.
+ * {@code /readyz} for readiness. Its own small listener, so busy user traffic cannot starve scrapes. HTTPS only, with
+ * the same certificate as the other listeners. Must never be published to the internet.
  */
 public final class ManagementServer implements AutoCloseable {
 
@@ -48,6 +48,7 @@ public final class ManagementServer implements AutoCloseable {
     private final ScheduledExecutorService checks = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().name("readiness").daemon().factory());
     private volatile boolean keycloakUp;
+    private ServerTls tls;
     private EventLoopGroup group;
     private Channel channel;
 
@@ -60,6 +61,7 @@ public final class ManagementServer implements AutoCloseable {
     }
 
     public ManagementServer start() throws InterruptedException {
+        tls = new ServerTls(app.config.http.tls);
         checks.scheduleWithFixedDelay(() -> keycloakUp = app.oidc.reachable(), 0, 30, TimeUnit.SECONDS);
         group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         ServerBootstrap b = new ServerBootstrap()
@@ -68,11 +70,11 @@ public final class ManagementServer implements AutoCloseable {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        ch.pipeline().addLast(new HttpServerCodec(), new HttpObjectAggregator(8192), new Handler());
+                        ch.pipeline().addLast(tls.server().newHandler(ch.alloc()), new HttpServerCodec(), new HttpObjectAggregator(8192), new Handler());
                     }
                 });
         channel = b.bind(app.config.management.bind, app.config.management.port).sync().channel();
-        log.info("management listening on {}:{}", app.config.management.bind, port());
+        log.info("management HTTPS listening on {}:{}", app.config.management.bind, port());
         return this;
     }
 
@@ -178,6 +180,9 @@ public final class ManagementServer implements AutoCloseable {
         checks.shutdownNow();
         if (channel != null) {
             channel.close().syncUninterruptibly();
+        }
+        if (tls != null) {
+            tls.close();
         }
         if (group != null) {
             group.shutdownGracefully(0, 1, TimeUnit.SECONDS).syncUninterruptibly();

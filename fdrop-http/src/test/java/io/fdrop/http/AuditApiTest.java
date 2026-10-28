@@ -26,7 +26,7 @@ class AuditApiTest {
 
     Fdrop app;
     HttpServer server;
-    HttpClient http = HttpClient.newHttpClient();
+    HttpClient http = TestSupport.httpClient();
     String base;
 
     @BeforeEach
@@ -37,7 +37,7 @@ class AuditApiTest {
         b.init(dir.resolve("files"));
         app = TestSupport.fdrop(cfg, b);
         server = new HttpServer(app).start();
-        base = "http://localhost:" + server.port();
+        base = "https://localhost:" + server.port();
     }
 
     @AfterEach

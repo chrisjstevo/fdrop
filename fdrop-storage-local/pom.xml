@@ -24,6 +24,12 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <!-- TestCerts, for the HTTPS certificate TestSupport.config() sets -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>

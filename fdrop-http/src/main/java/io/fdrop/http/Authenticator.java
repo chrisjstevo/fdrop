@@ -88,14 +88,8 @@ final class Authenticator {
         ctx.twoFactor = s.twoFactor;
     }
 
-    /**
-     * HTTP Basic: application accounts only, and only over TLS (here or at a trusted proxy) unless
-     * {@code auth.applications.basicWithoutTls} is set for development.
-     */
+    /** HTTP Basic: application accounts only (every listener is TLS, so the password is never sent in clear). */
     private void basic(Ctx ctx, String encoded) {
-        if (!ctx.secure() && !app.config.auth.applications.basicWithoutTls) {
-            throw FdropException.unauthorized("HTTP Basic is accepted only over TLS");
-        }
         String decoded;
         try {
             decoded = new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);

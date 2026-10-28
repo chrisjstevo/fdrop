@@ -11,11 +11,11 @@ services:
       - ../..:/repo:z
   keycloak:
     image: quay.io/keycloak/keycloak:26.4
-    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    command: ["start-dev", "--import-realm", "--http-enabled=false", "--https-port=8180", "--https-certificate-file=/etc/fdrop/certs/server.crt", "--https-certificate-key-file=/etc/fdrop/certs/server.key"]   # HTTPS only, with the dev localhost certificate
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME: https://localhost:8180
       KC_TRUSTSTORE_PATHS: /etc/fdrop/certs/ca.crt   # for back-channel logout calls to fdrop's HTTPS port
     ports: ["8180:8180", "8443:8443", "8444:8444", "2222:2222", "127.0.0.1:8081:8081"]   # fdrop shares this network
     volumes:
@@ -35,6 +35,7 @@ services:
       FDROP_HTTP_TLS_CERT: /etc/fdrop/certs/server.crt
       FDROP_HTTP_TLS_KEY: /etc/fdrop/certs/server.key
       FDROP_AUTH_APPLICATIONS_MTLS_TRUSTEDCAS: /etc/fdrop/certs/ca.crt
+      FDROP_AUTH_OIDC_TRUSTEDCAS: /etc/fdrop/certs/ca.crt   # Keycloak's certificate is from the same dev CA
     volumes:
       - ../../.devcontainer/fdrop.dev.yaml:/etc/fdrop/fdrop.yaml:ro,z
       - ./certs:/etc/fdrop/certs:ro,z

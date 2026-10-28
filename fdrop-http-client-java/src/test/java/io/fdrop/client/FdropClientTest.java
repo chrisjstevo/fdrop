@@ -57,7 +57,7 @@ class FdropClientTest {
         b.init(Files.createDirectories(dir.resolve("files")));
         app = TestSupport.fdrop(cfg, b);
         server = new HttpServer(app).start();
-        url = "http://localhost:" + server.port();
+        url = "https://localhost:" + server.port();
         app.accounts.ensure(TestSupport.user("alice"));
         app.accounts.ensure(TestSupport.user("bob"));
     }
@@ -69,7 +69,7 @@ class FdropClientTest {
     }
 
     private FdropClient.Builder builder(String user) {
-        return FdropClient.builder().baseUrl(url).allowPlainHttp(true).bearerToken(() -> "user:" + user)
+        return FdropClient.builder().baseUrl(url).sslContext(TestSupport.clientTls()).bearerToken(() -> "user:" + user)
                 .maxAttempts(3);
     }
 
@@ -253,8 +253,8 @@ class FdropClientTest {
     void settingsAreChecked() {
         assertThatThrownBy(() -> FdropClient.builder().baseUrl("http://example.com").bearerToken(() -> "t").build())
                 .hasMessageContaining("https://");
-        assertThatThrownBy(() -> FdropClient.builder().baseUrl("http://localhost:1").allowPlainHttp(true)
-                .basicAuth("app", "pw".toCharArray()).build()).hasMessageContaining("plain HTTP");
+        assertThatThrownBy(() -> FdropClient.builder().baseUrl("http://localhost:1")
+                .basicAuth("app", "pw".toCharArray()).build()).hasMessageContaining("HTTPS only");
         assertThatThrownBy(() -> FdropClient.builder().maxAttempts(0)).isInstanceOf(IllegalArgumentException.class);
     }
 

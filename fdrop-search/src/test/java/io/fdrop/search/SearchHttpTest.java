@@ -30,7 +30,7 @@ class SearchHttpTest {
 
     Fdrop app;
     HttpServer server;
-    HttpClient http = HttpClient.newHttpClient();
+    HttpClient http = TestSupport.httpClient();
     String base;
 
     @BeforeEach
@@ -44,7 +44,7 @@ class SearchHttpTest {
         b.init(dir.resolve("files"));
         app = TestSupport.fdrop(cfg, b);
         server = new HttpServer(app).start();
-        base = "http://localhost:" + server.port();
+        base = "https://localhost:" + server.port();
         for (String u : new String[]{"user:alice", "user:carol", "admin2fa:root"}) {
             get("/api/v1/me", u);
         }

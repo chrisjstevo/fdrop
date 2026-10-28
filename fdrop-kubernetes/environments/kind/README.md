@@ -49,7 +49,8 @@ tofu destroy                                    # or: kind delete cluster --name
 
 ## What differs from production
 
-One replica of everything, so no high availability; Garage keeps a single copy; certificates come from a local CA that
-fdrop and Traefik are told to trust; the public names reach Traefik inside the cluster through `hostAliases`; services
+One replica of everything, so no high availability; Garage keeps a single copy; public certificates come from a local CA
+that fdrop, Traefik and Prometheus are told to trust (inside the cluster, Keycloak and Garage's TLS sidecars use the
+internal CA, as in production); the public names reach Traefik inside the cluster through `hostAliases`; services
 are NodePorts on host ports 18443, 18444 and 12222 instead of load balancers. Keycloak's back-channel logout calls to fdrop
 fail here (Keycloak does not trust the local CA), so signing out in Keycloak does not end fdrop sessions on kind.

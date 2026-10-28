@@ -8,6 +8,12 @@ import io.fdrop.core.service.SshTools;
 import io.fdrop.core.storage.StorageBackend;
 import io.fdrop.core.util.Hashing;
 
+import javax.net.ssl.SSLContext;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.http.HttpClient;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,7 +25,45 @@ import java.util.Map;
 /** Builds a full {@link Fdrop} on an in-memory H2 database for tests, with a fake SSH toolkit. */
 public final class TestSupport {
 
+    /** One CA and {@code localhost} certificate for every test server in this JVM: fdrop serves HTTPS only. */
+    private static final class Tls {
+        static final TestCerts.Issued CA = TestCerts.ca("fdrop test server CA");
+        static final Path[] SERVER;
+
+        static {
+            try {
+                Path dir = Files.createTempDirectory("fdrop-test-tls");
+                SERVER = TestCerts.server(CA).write(dir, "server");
+                for (Path f : SERVER) {
+                    f.toFile().deleteOnExit();
+                }
+                dir.toFile().deleteOnExit();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+    }
+
     private TestSupport() {
+    }
+
+    /** The CA of the certificate {@link #config()} gives the server. */
+    public static TestCerts.Issued serverCa() {
+        return Tls.CA;
+    }
+
+    /** A TLS context trusting the test server's certificate (and nothing else). */
+    public static SSLContext clientTls() {
+        try {
+            return TestCerts.clientContext(null, Tls.CA);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** An HTTP client for the test server. */
+    public static HttpClient httpClient() {
+        return HttpClient.newBuilder().sslContext(clientTls()).build();
     }
 
     public static FdropConfig config() {
@@ -33,6 +77,8 @@ public final class TestSupport {
         // each application its own audit index (with fdrop-search on the classpath), under target/ for mvn clean
         cfg.audit.indexDir = "target/audit-index/" + Hashing.randomToken(8);
         cfg.audit.node = "test";
+        cfg.http.tls.cert = Tls.SERVER[0].toString();
+        cfg.http.tls.key = Tls.SERVER[1].toString();
         return cfg;
     }
 

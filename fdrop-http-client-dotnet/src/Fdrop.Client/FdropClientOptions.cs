@@ -32,9 +32,6 @@ public sealed class FdropClientOptions
     /// </summary>
     public X509Certificate2Collection? TrustedCaCertificates { get; init; }
 
-    /// <summary>Allows <c>http://</c> addresses, for tests against a local server. Never in production.</summary>
-    public bool AllowPlainHttp { get; init; }
-
     /// <summary>Tries per request (per chunk, for uploads) before giving up; at least 1.</summary>
     public int MaxAttempts { get; init; } = 5;
 
@@ -102,10 +99,9 @@ public sealed class FdropClientOptions
             throw new ArgumentException("BaseAddress is required", nameof(BaseAddress));
         }
 
-        bool http = BaseAddress.Scheme == Uri.UriSchemeHttp;
-        if (BaseAddress.Scheme != Uri.UriSchemeHttps && !(http && AllowPlainHttp))
+        if (BaseAddress.Scheme != Uri.UriSchemeHttps)
         {
-            throw new ArgumentException("BaseAddress must be https:// (AllowPlainHttp is for local tests only)", nameof(BaseAddress));
+            throw new ArgumentException("BaseAddress must be https://: fdrop serves HTTPS only", nameof(BaseAddress));
         }
 
         int ways = (BearerToken is null ? 0 : 1) + (BasicUsername is null ? 0 : 1) + (ClientCertificate is null ? 0 : 1);
@@ -114,9 +110,9 @@ public sealed class FdropClientOptions
             throw new ArgumentException("give one of BearerToken, BasicUsername/BasicPassword or ClientCertificate", nameof(BearerToken));
         }
 
-        if (BasicUsername is not null && (BasicPassword is null || http))
+        if (BasicUsername is not null && BasicPassword is null)
         {
-            throw new ArgumentException(http ? "fdrop refuses passwords over plain HTTP" : "BasicPassword is required with BasicUsername", nameof(BasicPassword));
+            throw new ArgumentException("BasicPassword is required with BasicUsername", nameof(BasicPassword));
         }
 
         if (ClientCertificate is not null && !ClientCertificate.HasPrivateKey)

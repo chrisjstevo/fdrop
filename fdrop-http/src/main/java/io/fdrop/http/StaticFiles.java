@@ -43,11 +43,6 @@ final class StaticFiles {
     }
 
     private final Map<String, Optional<Asset>> cache = new ConcurrentHashMap<>();
-    private final boolean hsts;
-
-    StaticFiles(boolean hsts) {
-        this.hsts = hsts;
-    }
 
     Response serve(Ctx ctx, boolean apiPathExists) {
         String path = ctx.path();
@@ -77,9 +72,7 @@ final class StaticFiles {
         h.set("Content-Security-Policy", CSP);
         h.set("X-Frame-Options", "DENY");
         h.set("Referrer-Policy", "same-origin");
-        if (hsts) {
-            h.set("Strict-Transport-Security", "max-age=31536000");
-        }
+        h.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
         if (asset.isEmpty()) {
             h.set("Cache-Control", "no-cache");
             return new Response.Bytes(200, PLACEHOLDER, "text/html; charset=utf-8", h);

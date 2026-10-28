@@ -6,6 +6,9 @@ scrape_configs:
   - job_name: fdrop
     scrape_interval: 15s
     metrics_path: /metrics
+    scheme: https            # fdrop's management port is HTTPS only
+    tls_config:
+      ca_file: /etc/prometheus/fdrop-ca.crt
     authorization:
       credentials_file: /etc/prometheus/fdrop-metrics-token
     static_configs:
@@ -17,7 +20,7 @@ scrape_configs:
     params:
       module: [http_2xx]
     static_configs:
-      - targets: ["http://fdrop.internal:8081/readyz"]
+      - targets: ["https://fdrop.internal:8081/readyz"]   # the blackbox module must trust fdrop's CA
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

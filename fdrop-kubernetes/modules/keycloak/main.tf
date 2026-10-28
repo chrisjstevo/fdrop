@@ -1,6 +1,7 @@
 # Keycloak for fdrop, run by the Keycloak operator, with the fdrop realm imported from the dev realm's definition
-# (see "Kubernetes deployment" in SPEC.md). TLS ends at Traefik; inside the cluster a network policy admits only
-# Traefik and the monitoring namespace.
+# (see "Kubernetes deployment" in SPEC.md). The public TLS ends at Traefik, which calls Keycloak over HTTPS again,
+# checking its internal-CA certificate: Keycloak serves no plain HTTP. A network policy admits only Traefik and the
+# monitoring namespace.
 
 locals {
   realm_source = jsondecode(file(coalesce(var.realm_file, "${path.module}/../../../.devcontainer/keycloak/fdrop-realm.json")))
@@ -30,7 +31,9 @@ locals {
   users = [
     for u in local.realm_source.users : u if var.include_dev_users || startswith(u.username, "service-account-")
   ]
-  realm = merge(local.realm_source, { clients = local.clients, users = local.users, sslRequired = "external" })
+  # the operator's Service, which Traefik calls
+  service_names = ["keycloak-service.${var.namespace}.svc", "keycloak-service.${var.namespace}.svc.cluster.local"]
+  realm         = merge(local.realm_source, { clients = local.clients, users = local.users, sslRequired = "external" })
 }
 
 resource "kubernetes_secret_v1" "bootstrap_admin" {
@@ -80,6 +83,21 @@ resource "kubectl_manifest" "certificate" {
   })
 }
 
+# Keycloak's own certificate, for Traefik's HTTPS calls to it inside the cluster
+resource "kubectl_manifest" "internal_certificate" {
+  yaml_body = yamlencode({
+    apiVersion = "cert-manager.io/v1"
+    kind       = "Certificate"
+    metadata   = { name = "keycloak-internal", namespace = var.namespace }
+    spec = {
+      secretName = "keycloak-internal-tls"
+      dnsNames   = local.service_names
+      privateKey = { algorithm = "ECDSA", size = 256, rotationPolicy = "Always" }
+      issuerRef  = { name = var.internal_issuer, kind = "ClusterIssuer" }
+    }
+  })
+}
+
 resource "kubectl_manifest" "keycloak" {
   yaml_body = yamlencode({
     apiVersion = "k8s.keycloak.org/v2alpha1"
@@ -93,7 +111,7 @@ resource "kubectl_manifest" "keycloak" {
         usernameSecret = { name = "keycloak-db", key = "username" }
         passwordSecret = { name = "keycloak-db", key = "password" }
       }
-      http           = { httpEnabled = true }
+      http           = { httpEnabled = false, httpsPort = 8443, tlsSecret = "keycloak-internal-tls" }
       hostname       = { hostname = local.public_url, strict = true }
       proxy          = { headers = "xforwarded" }
       ingress        = { enabled = false }
@@ -122,7 +140,7 @@ resource "kubectl_manifest" "keycloak" {
       }
     }
   })
-  depends_on = [kubernetes_secret_v1.db, kubernetes_secret_v1.bootstrap_admin]
+  depends_on = [kubernetes_secret_v1.db, kubernetes_secret_v1.bootstrap_admin, kubectl_manifest.internal_certificate]
 }
 
 # Creates the realm once: an import never changes a realm that exists (see "Rotating secrets" in the README)
@@ -143,6 +161,19 @@ resource "kubectl_manifest" "realm" {
   depends_on = [kubectl_manifest.keycloak, kubernetes_secret_v1.clients]
 }
 
+# Traefik re-encrypts to Keycloak and checks its certificate against the internal CA (the Secret's ca.crt)
+resource "kubectl_manifest" "servers_transport" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata   = { name = "keycloak", namespace = var.namespace }
+    spec = {
+      serverName = local.service_names[0]
+      rootCAs    = [{ secret = "keycloak-internal-tls" }]
+    }
+  })
+}
+
 resource "kubectl_manifest" "route" {
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -153,12 +184,12 @@ resource "kubectl_manifest" "route" {
       routes = [{
         match    = "Host(`${var.hostname}`)"
         kind     = "Rule"
-        services = [{ name = "keycloak-service", port = 8080 }]
+        services = [{ name = "keycloak-service", port = 8443, scheme = "https", serversTransport = "keycloak" }]
       }]
       tls = { secretName = "keycloak-public-tls" }
     }
   })
-  depends_on = [kubectl_manifest.keycloak, kubectl_manifest.certificate]
+  depends_on = [kubectl_manifest.keycloak, kubectl_manifest.certificate, kubectl_manifest.servers_transport]
 }
 
 resource "kubernetes_network_policy_v1" "keycloak" {
@@ -178,7 +209,7 @@ resource "kubernetes_network_policy_v1" "keycloak" {
         }
       }
       ports {
-        port     = "8080"
+        port     = "8443"
         protocol = "TCP"
       }
     }

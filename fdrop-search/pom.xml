@@ -75,6 +75,12 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <!-- TestCerts, for the test server's HTTPS certificate -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>io.fdrop</groupId>
       <artifactId>fdrop-storage-local</artifactId>

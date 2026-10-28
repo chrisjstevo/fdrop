@@ -134,7 +134,6 @@ public interface FdropClient extends AutoCloseable {
         String basicUser;
         char[] basicPassword;
         javax.net.ssl.SSLContext sslContext;
-        boolean allowPlainHttp;
         int maxAttempts = 5;
         java.time.Duration initialBackoff = java.time.Duration.ofSeconds(1);
         java.time.Duration maxBackoff = java.time.Duration.ofSeconds(60);
@@ -187,12 +186,6 @@ public interface FdropClient extends AutoCloseable {
          */
         public Builder clientCertificate(Path cert, Path key, Path ca) {
             this.sslContext = Pem.sslContext(cert, key, ca);
-            return this;
-        }
-
-        /** Allows {@code http://} URLs, for tests against a local server. Never in production. */
-        public Builder allowPlainHttp(boolean allow) {
-            this.allowPlainHttp = allow;
             return this;
         }
 

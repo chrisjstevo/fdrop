@@ -36,13 +36,14 @@ public class KeycloakAdmin {
 
     private final OidcClient oidc;
     private final FdropMetrics metrics;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    private final HttpClient http;
     private final ObjectMapper json = new ObjectMapper();
     private final URI base;
     private volatile OidcClient.Tokens token;
 
     public KeycloakAdmin(OidcClient oidc, FdropMetrics metrics) {
         this.oidc = oidc;
+        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).sslContext(oidc.tls()).build();
         this.metrics = metrics;
         String issuer = oidc.config().issuer;
         int i = issuer.indexOf("/realms/");

@@ -84,9 +84,19 @@ public class OidcClient {
     private volatile DefaultJWTProcessor<SecurityContext> logoutProcessor;
     private volatile IDTokenValidator idTokenValidator;
 
+    /** Trusts the JDK's CAs and {@code auth.oidc.trustedCas}, for every call to Keycloak. */
+    private final javax.net.ssl.SSLContext tls;
+
     public OidcClient(FdropConfig.Oidc cfg, FdropMetrics metrics) {
         this.cfg = cfg;
         this.metrics = metrics;
+        io.fdrop.core.util.TrustedCas.requireHttps("auth.oidc.issuer", cfg.issuer);
+        this.tls = io.fdrop.core.util.TrustedCas.context(cfg.trustedCas);
+    }
+
+    /** The TLS context for Keycloak calls: also used by the Admin REST API client. */
+    public javax.net.ssl.SSLContext tls() {
+        return tls;
     }
 
     /** Fetches provider metadata if not yet known. Throws {@code 503} when Keycloak is unreachable. */
@@ -96,9 +106,14 @@ public class OidcClient {
         }
         long start = System.nanoTime();
         try {
-            OIDCProviderMetadata m = OIDCProviderMetadata.resolve(new Issuer(cfg.issuer), CONNECT_TIMEOUT_MS,
-                    READ_TIMEOUT_MS);
-            JWKSource<SecurityContext> jwks = JWKSourceBuilder.create(m.getJWKSetURI().toURL())
+            OIDCProviderMetadata m = OIDCProviderMetadata.resolve(new Issuer(cfg.issuer), req -> {
+                req.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                req.setReadTimeout(READ_TIMEOUT_MS);
+                req.setSSLSocketFactory(tls.getSocketFactory());
+            });
+            JWKSource<SecurityContext> jwks = JWKSourceBuilder.<SecurityContext>create(m.getJWKSetURI().toURL(),
+                    new com.nimbusds.jose.util.DefaultResourceRetriever(CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS,
+                            512 * 1024, true, tls.getSocketFactory()))
                     .retrying(true).build();
 
             DefaultJWTProcessor<SecurityContext> ap = new DefaultJWTProcessor<>();
@@ -315,6 +330,7 @@ public class OidcClient {
             HTTPRequest http = tb.build().toHTTPRequest();
             http.setConnectTimeout(CONNECT_TIMEOUT_MS);
             http.setReadTimeout(READ_TIMEOUT_MS);
+            http.setSSLSocketFactory(tls.getSocketFactory());
             TokenResponse resp = oidc ? OIDCTokenResponseParser.parse(http.send()) : TokenResponse.parse(http.send());
             metrics.keycloakCall(op, true, System.nanoTime() - start);
             if (!resp.indicatesSuccess()) {

@@ -11,6 +11,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -22,6 +25,7 @@ import java.util.Arrays;
 import java.util.Random;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** The HTTP API end to end over a real socket, with a fake identity provider. */
 class HttpApiTest {
@@ -32,7 +36,7 @@ class HttpApiTest {
     Fdrop app;
     HttpServer server;
     ManagementServer mgmt;
-    HttpClient http = HttpClient.newHttpClient();
+    HttpClient http = TestSupport.httpClient();
     String base;
 
     @BeforeEach
@@ -40,13 +44,15 @@ class HttpApiTest {
         FdropConfig cfg = TestSupport.config();
         cfg.http.port = 0;
         cfg.management.port = 0;
+        cfg.http.mtls.enabled = true;
+        cfg.http.mtls.port = 0;
         cfg.http.simpleUploadMax = io.fdrop.core.config.DataSize.ofMiB(1);
         LocalStorageBackend b = new LocalStorageBackend();
         b.init(dir);
         app = TestSupport.fdrop(cfg, b);
         server = new HttpServer(app).start();
         mgmt = new ManagementServer(app).start();
-        base = "http://localhost:" + server.port();
+        base = "https://localhost:" + server.port();
     }
 
     @AfterEach
@@ -205,6 +211,8 @@ class HttpApiTest {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(index.statusCode()).isEqualTo(200);
         assertThat(index.headers().firstValue("Content-Security-Policy").orElseThrow()).contains("default-src 'self'");
+        assertThat(index.headers().firstValue("Strict-Transport-Security"))
+                .contains("max-age=31536000; includeSubDomains");
         HttpResponse<String> apiMissing = http.send(req("/api/v1/nope", "user:alice").build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(apiMissing.statusCode()).isEqualTo(404);
@@ -212,7 +220,7 @@ class HttpApiTest {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(wrongMethod.statusCode()).isEqualTo(405);
 
-        String m = "http://localhost:" + mgmt.port();
+        String m = "https://localhost:" + mgmt.port();
         HttpResponse<String> metrics = http.send(HttpRequest.newBuilder(URI.create(m + "/metrics")).build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(metrics.statusCode()).isEqualTo(200);
@@ -230,10 +238,52 @@ class HttpApiTest {
     @Test
     void metricsTokenIsEnforcedWhenSet() throws Exception {
         app.config.management.metricsToken = "s3cret";
-        String m = "http://localhost:" + mgmt.port() + "/metrics";
+        String m = "https://localhost:" + mgmt.port() + "/metrics";
         assertThat(http.send(HttpRequest.newBuilder(URI.create(m)).build(), HttpResponse.BodyHandlers.ofString())
                 .statusCode()).isEqualTo(401);
         assertThat(http.send(HttpRequest.newBuilder(URI.create(m)).header("Authorization", "Bearer s3cret").build(),
                 HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void plainHttpIsAnsweredOnNoPort() throws Exception {
+        for (int port : new int[]{server.port(), server.mtlsPort(), mgmt.port()}) {
+            assertThat(plainHttp(port)).as("port " + port).doesNotStartWith("HTTP/");
+            assertThatThrownBy(() -> http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port
+                    + "/healthz")).build(), HttpResponse.BodyHandlers.ofString())).as("port " + port)
+                    .isInstanceOf(java.io.IOException.class);
+        }
+    }
+
+    /** What a listener answers to a plain-HTTP request: never an HTTP response, at most a TLS alert. */
+    private static String plainHttp(int port) throws Exception {
+        try (Socket s = new Socket("localhost", port)) {
+            s.setSoTimeout(5000);
+            OutputStream out = s.getOutputStream();
+            out.write("GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            InputStream in = s.getInputStream();
+            return new String(in.readAllBytes(), StandardCharsets.ISO_8859_1);
+        } catch (java.net.SocketException e) {
+            return "";   // reset: the TLS handler refused the bytes
+        }
+    }
+
+    @Test
+    void noListenerStartsWithoutACertificate() {
+        String cert = app.config.http.tls.cert;
+        try {
+            app.config.http.tls.cert = null;
+            assertThatThrownBy(() -> new HttpServer(app).start()).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("http.tls.cert and http.tls.key are required");
+            assertThatThrownBy(() -> new ManagementServer(app).start()).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("HTTPS only");
+            app.config.http.tls.cert = dir.resolve("missing.crt").toString();
+            assertThatThrownBy(() -> new HttpServer(app).start()).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("cannot read the TLS certificate");
+        } finally {
+            app.config.http.tls.cert = cert;
+        }
     }
 }

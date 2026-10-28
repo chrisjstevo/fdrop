@@ -51,17 +51,14 @@ final class HttpFdropClient implements FdropClient {
             throw new IllegalArgumentException("baseUrl is required");
         }
         String scheme = b.baseUrl.getScheme();
-        if (!"https".equalsIgnoreCase(scheme) && !("http".equalsIgnoreCase(scheme) && b.allowPlainHttp)) {
-            throw new IllegalArgumentException("baseUrl must be https:// (allowPlainHttp is for local tests only)");
+        if (!"https".equalsIgnoreCase(scheme)) {
+            throw new IllegalArgumentException("baseUrl must be https://: fdrop serves HTTPS only");
         }
         this.base = URI.create(b.baseUrl.toString().replaceAll("/+$", ""));
         if (b.bearerToken != null && b.basicUser != null) {
             throw new IllegalArgumentException("give a bearer token or a username and password, not both");
         }
         if (b.basicUser != null) {
-            if ("http".equalsIgnoreCase(scheme)) {
-                throw new IllegalArgumentException("fdrop refuses passwords over plain HTTP");
-            }
             String pair = b.basicUser + ":" + new String(b.basicPassword);
             String value = "Basic " + Base64.getEncoder().encodeToString(pair.getBytes(StandardCharsets.UTF_8));
             this.authorization = () -> value;

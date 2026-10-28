@@ -25,7 +25,7 @@
   },
   "remoteEnv": {
     "FDROP_CONFIG": "/workspaces/fdrop/.devcontainer/fdrop.dev.yaml",
-    "FDROP_AUTH_OIDC_ISSUER": "http://localhost:8180/realms/fdrop",
+    "FDROP_AUTH_OIDC_ISSUER": "https://localhost:8180/realms/fdrop",
     "FDROP_AUTH_OIDC_WEBCLIENTSECRET": "fdrop-web-dev-secret",
     "FDROP_AUTH_OIDC_SFTPCLIENTSECRET": "fdrop-sftp-dev-secret",
     "FDROP_LOG_FORMAT": "PLAIN",

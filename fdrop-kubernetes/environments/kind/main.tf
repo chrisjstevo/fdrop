@@ -191,6 +191,7 @@ module "fdrop" {
   public_port      = var.ports.https
   public_issuer    = "fdrop-local-ca"
   trust_public_ca  = true
+  internal_ca      = module.platform.internal_ca.certificate
   oidc_issuer      = module.keycloak.issuer
   two_factor       = "none" # the dev users have no second factor; set admins to try the production behaviour
   db_host          = module.postgres.fdrop_host

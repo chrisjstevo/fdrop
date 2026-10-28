@@ -5,6 +5,11 @@ for `fdrop.<domain>`, `apps.<domain>` and `auth.<domain>`, a storage class for n
 PersistentVolumes, OpenEBS LocalPV or TopoLVM) on at least three nodes, and an S3 bucket outside the cluster for
 PostgreSQL backups.
 
+Nothing in it speaks plain HTTP, inside the cluster either: Traefik calls fdrop and Keycloak over HTTPS again, and
+fdrop calls Garage through its TLS sidecars. The internal certificates come from `fdrop-internal-ca`, a CA OpenTofu
+makes (its key is in the encrypted state) and cert-manager issues from; a new CA is made by the first apply in its last
+year.
+
 ## Before the first apply
 
 1. A private, versioned S3 bucket for the state, and a KMS key the deployer's role may use; set them in `versions.tf`

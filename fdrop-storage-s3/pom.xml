@@ -36,6 +36,11 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>aws-crt-client</artifactId>
     </dependency>
+    <!-- for an S3 endpoint with a private CA (storage.s3.trustedCas): the CRT client cannot be given CAs -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-client</artifactId>
+    </dependency>
     <dependency>
       <!-- the aws-kms key provider for encryption at rest -->
       <groupId>software.amazon.awssdk</groupId>
@@ -56,6 +61,12 @@
       <groupId>io.fdrop</groupId>
       <artifactId>fdrop-core</artifactId>
       <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <!-- TestCerts, for the HTTPS certificate TestSupport.config() sets -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

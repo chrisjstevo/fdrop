@@ -80,9 +80,10 @@ public final class S3StorageBackend implements StorageBackend {
         if (c.bucket == null || c.bucket.isBlank()) {
             throw new IllegalArgumentException("storage.s3.bucket is required");
         }
+        io.fdrop.core.util.TrustedCas.requireHttps("storage.s3.endpointOverride", c.endpointOverride);
         S3ClientBuilder b = S3Client.builder()
                 .region(Region.of(c.region))
-                .httpClient(AwsCrtHttpClient.builder().build())
+                .httpClient(httpClient(c.trustedCas))
                 .credentialsProvider(DefaultCredentialsProvider.builder().build())
                 .forcePathStyle(c.pathStyle)
                 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
@@ -91,6 +92,20 @@ public final class S3StorageBackend implements StorageBackend {
             b.endpointOverride(URI.create(c.endpointOverride));
         }
         init(b.build(), c.bucket, c.prefix, c.sse);
+    }
+
+    /**
+     * The CRT client, or with {@code storage.s3.trustedCas} the URL-connection client, which (unlike the CRT one) can
+     * be given CAs to trust, for an in-cluster store with a private CA such as the Kubernetes deployment's Garage.
+     */
+    static software.amazon.awssdk.http.SdkHttpClient httpClient(String trustedCas) {
+        if (trustedCas == null || trustedCas.isBlank()) {
+            return AwsCrtHttpClient.builder().build();
+        }
+        javax.net.ssl.TrustManager tm = io.fdrop.core.util.TrustedCas.trustManager(trustedCas);
+        return software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient.builder()
+                .tlsTrustManagersProvider(() -> new javax.net.ssl.TrustManager[]{tm})
+                .build();
     }
 
     /** For tests: an explicit client. */

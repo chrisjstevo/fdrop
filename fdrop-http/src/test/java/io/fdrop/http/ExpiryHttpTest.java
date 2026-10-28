@@ -32,7 +32,7 @@ class ExpiryHttpTest {
     Fdrop app;
     HttpServer server;
     TestSupport.MutableClock clock;
-    HttpClient http = HttpClient.newHttpClient();
+    HttpClient http = TestSupport.httpClient();
     String base;
     final String alice = "user:alice";
     final String bob = "user:bob";
@@ -47,7 +47,7 @@ class ExpiryHttpTest {
         clock = new TestSupport.MutableClock(Instant.now().truncatedTo(ChronoUnit.SECONDS));
         app = TestSupport.fdrop(cfg, b, clock);
         server = new HttpServer(app).start();
-        base = "http://localhost:" + server.port();
+        base = "https://localhost:" + server.port();
         send(req("/api/v1/me", alice).build());
         send(req("/api/v1/me", bob).build());
     }

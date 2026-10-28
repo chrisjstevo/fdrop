@@ -71,7 +71,7 @@ run "only_fdrop_reaches_the_s3_api" {
   assert {
     condition = anytrue([
       for i in kubernetes_network_policy_v1.garage.spec[0].ingress :
-      i.ports[0].port == "3900" && i.from[0].namespace_selector[0].match_labels["kubernetes.io/metadata.name"] == "fdrop"
+      i.ports[0].port == "3443" && i.from[0].namespace_selector[0].match_labels["kubernetes.io/metadata.name"] == "fdrop"
     ])
     error_message = "the S3 port admits fdrop's namespace"
   }
@@ -91,5 +91,38 @@ run "the_key_is_the_generated_one" {
   assert {
     condition     = contains([for e in kubernetes_job_v1.setup.spec[0].template[0].spec[0].container[0].env : e.name], "KEY_SECRET")
     error_message = "the Job reads the key's secret from the Secret, not from its own spec"
+  }
+}
+
+run "garage_is_reached_only_over_https" {
+  command = plan
+
+  assert {
+    condition = (strcontains(kubernetes_config_map_v1.config.data["garage.toml"], "api_bind_addr = \"127.0.0.1:3900\"")
+    && strcontains(kubernetes_config_map_v1.config.data["garage.toml"], "api_bind_addr = \"127.0.0.1:3903\""))
+    error_message = "Garage's plain-HTTP APIs listen inside the pod only"
+  }
+  assert {
+    condition = toset([
+      for c in yamldecode(kubectl_manifest.statefulset.yaml_body).spec.template.spec.containers : c.name
+    ]) == toset(["garage", "s3-tls", "admin-tls"])
+    error_message = "a TLS sidecar fronts each API"
+  }
+  assert {
+    condition     = toset([for p in kubernetes_service_v1.garage.spec[0].port : p.port]) == toset([3443, 3943])
+    error_message = "the Service offers only the TLS ports"
+  }
+  assert {
+    condition     = output.endpoint == "https://garage.fdrop-objectstore.svc:3443"
+    error_message = "fdrop is given the HTTPS endpoint"
+  }
+  assert {
+    condition = (one([for e in kubernetes_job_v1.setup.spec[0].template[0].spec[0].container[0].env : e.value if e.name == "GARAGE"]) == "https://garage.fdrop-objectstore.svc:3943"
+    && strcontains(kubernetes_job_v1.setup.spec[0].template[0].spec[0].container[0].command[2], "--cacert"))
+    error_message = "the setup Job calls the admin API over HTTPS and checks its certificate"
+  }
+  assert {
+    condition     = yamldecode(kubectl_manifest.certificate.yaml_body).spec.issuerRef.name == "fdrop-internal-ca"
+    error_message = "the sidecars' certificate comes from the internal CA"
   }
 }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -36,6 +37,12 @@ internal sealed record TestServer(string Url, string MtlsUrl, string Ca, string 
 
         return s;
     }
+
+    /// <summary>The CA of the server's certificate: fdrop serves HTTPS only.</summary>
+    public X509Certificate2Collection Roots() => FdropClientOptions.LoadPemCa(Ca);
+
+    /// <summary>A handler trusting the server's certificate, for calls made beside the client.</summary>
+    public SocketsHttpHandler Handler() => new FdropClientOptions { TrustedCaCertificates = Roots() }.CreateHandler();
 }
 
 /// <summary>Records requests and fails or delays the ones a test picks, in front of the real handler.</summary>
@@ -44,7 +51,7 @@ internal sealed class FaultHandler : DelegatingHandler
     private int inFlightChunks;
 
     public FaultHandler()
-        : base(new SocketsHttpHandler())
+        : base(TestServer.Get().Handler())
     {
     }
 
@@ -112,7 +119,7 @@ public sealed class IntegrationTests : IDisposable
     private static FdropClientOptions Options(string user, int maxAttempts = 3, int parallel = 3) => new()
     {
         BaseAddress = new Uri(TestServer.Get().Url),
-        AllowPlainHttp = true,
+        TrustedCaCertificates = TestServer.Get().Roots(),
         BearerToken = _ => ValueTask.FromResult("user:" + user),
         MaxAttempts = maxAttempts,
         InitialBackoff = TimeSpan.FromMilliseconds(10),
@@ -137,7 +144,7 @@ public sealed class IntegrationTests : IDisposable
     /// <summary>The session's state as alice sees it; ABORTED, or gone, once the client discarded it.</summary>
     private static async Task<string> SessionState(string id)
     {
-        using var http = new HttpClient();
+        using var http = new HttpClient(TestServer.Get().Handler());
         using var req = new HttpRequestMessage(HttpMethod.Get, TestServer.Get().Url + "/api/v1/uploads/" + id);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "user:alice");
         using var r = await http.SendAsync(req, Ct);

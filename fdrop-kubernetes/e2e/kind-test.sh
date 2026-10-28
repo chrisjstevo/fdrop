@@ -18,6 +18,7 @@ work="$here/work"
 tofu=${TOFU:-tofu}
 image=localhost/fdrop:0.1.0-SNAPSHOT
 https=18443
+mtls=18444
 sftp_port=12222
 
 rm -rf "$work"
@@ -72,6 +73,16 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' --cacert "$work/ca.pem" "https://
 [ "$code" = 401 ] || fail "fdrop answered $code to an anonymous request"
 curl -fsS --cacert "$work/ca.pem" -u app-demo:app-demo "https://fdrop.localtest.me:$https/api/v1/me" \
   | grep -q '"username":"app-demo"' || fail "app-demo's password login"
+
+step "no plain HTTP, outside or inside"
+code=$(curl -sS -o /dev/null -w '%{http_code}' "http://fdrop.localtest.me:$mtls/api/v1/me" 2>/dev/null || true)
+[ "$code" = 000 ] || fail "fdrop's mTLS port answered plain HTTP with $code"
+ports=$(kubectl -n fdrop-objectstore get service garage -o jsonpath='{.spec.ports[*].port}')
+[ "$ports" = "3443 3943" ] || fail "Garage's Service offers $ports, not just its TLS ports"
+[ "$(kubectl -n keycloak get keycloak keycloak -o jsonpath='{.spec.http.httpEnabled}')" = false ] \
+  || fail "Keycloak still serves plain HTTP"
+[ "$(kubectl -n fdrop get pod fdrop-0 -o jsonpath='{.spec.containers[0].readinessProbe.httpGet.scheme}')" = HTTPS ] \
+  || fail "fdrop's management port is probed over plain HTTP"
 
 step "uploading 20 MiB in chunks as app-demo"
 head -c $((20 * 1024 * 1024)) /dev/urandom >"$work/big.bin"

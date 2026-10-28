@@ -78,11 +78,8 @@ public final class ClientTestServer {
         cfg.search.extract.isolation = "inprocess";
         cfg.search.commitInterval = "0s";
 
-        TestCerts.Issued ca = TestCerts.ca("fdrop .NET client test CA");
-        Path[] server = TestCerts.server(ca).write(dir, "server");
-        cfg.http.tls.cert = server[0].toString();
-        cfg.http.tls.key = server[1].toString();
-        Path caFile = Files.writeString(dir.resolve("ca.pem"), ca.certPem());
+        // fdrop serves HTTPS only: TestSupport.config() gave it a certificate from this CA
+        Path caFile = Files.writeString(dir.resolve("ca.pem"), TestSupport.serverCa().certPem());
         TestCerts.Issued appCert = TestCerts.selfSigned("CN=app-client");
         Path[] client = appCert.write(dir, "app-client");
 
@@ -110,7 +107,7 @@ public final class ClientTestServer {
         control.start();
 
         String body = "{\n"
-                + "  \"url\": \"http://localhost:" + http.port() + "\",\n"
+                + "  \"url\": \"https://localhost:" + http.port() + "\",\n"
                 + "  \"mtlsUrl\": \"https://localhost:" + http.mtlsPort() + "\",\n"
                 + "  \"ca\": " + quote(caFile) + ",\n"
                 + "  \"clientCert\": " + quote(client[0]) + ",\n"

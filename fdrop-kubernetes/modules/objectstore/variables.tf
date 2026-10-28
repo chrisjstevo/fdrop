@@ -49,6 +49,18 @@ variable "setup_image" {
   default     = "docker.io/curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac"
 }
 
+variable "tunnel_image" {
+  description = "ghostunnel, the TLS sidecar in front of Garage's S3 and admin APIs."
+  type        = string
+  default     = "docker.io/ghostunnel/ghostunnel:v1.11.5-distroless@sha256:a3199c5d87b90ebcaf83ac03ae4ae0c229e41118b6fc7ec5a7a4deb38ec6f0a4"
+}
+
+variable "internal_issuer" {
+  description = "cert-manager ClusterIssuer of the cluster's internal CA (the platform module's fdrop-internal-ca)."
+  type        = string
+  default     = "fdrop-internal-ca"
+}
+
 variable "bucket" {
   type    = string
   default = "fdrop"

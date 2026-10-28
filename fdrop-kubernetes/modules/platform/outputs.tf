@@ -6,10 +6,19 @@ output "ready" {
     traefik           = length(helm_release.traefik) > 0 ? helm_release.traefik[0].status : "external"
     keycloak_operator = length(kubectl_manifest.keycloak_operator)
     monitoring        = length(helm_release.kube_prometheus) > 0 ? helm_release.kube_prometheus[0].status : "external"
+    internal_issuer   = kubectl_manifest.internal_issuer.name
   }
 }
 
 output "versions" {
   description = "Pinned chart and operator versions."
   value       = local.versions
+}
+
+output "internal_ca" {
+  description = "The internal CA: its ClusterIssuer, and its certificate (PEM) for whoever calls a service it certified."
+  value = {
+    issuer      = "fdrop-internal-ca"
+    certificate = tls_self_signed_cert.internal_ca.cert_pem
+  }
 }

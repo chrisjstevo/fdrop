@@ -5,12 +5,13 @@ locals {
   labels        = { "app.kubernetes.io/name" = "fdrop" }
   public_url    = "https://${var.hostname}${var.public_port == 443 ? "" : ":${var.public_port}"}"
   forward_cidrs = [for h in var.forward_destinations : h if can(cidrhost(h, 0))]
+  s3_port       = regex(":([0-9]+)$", var.s3.endpoint)[0]
 
   config = {
     http = {
       port           = 8443
       publicUrl      = local.public_url
-      tls            = { enabled = true, cert = "/etc/fdrop/tls/tls.crt", key = "/etc/fdrop/tls/tls.key" }
+      tls            = { cert = "/etc/fdrop/tls/tls.crt", key = "/etc/fdrop/tls/tls.key" }
       trustedProxies = var.trusted_proxies
       mtls           = { enabled = true, port = 8444 }
     }
@@ -22,12 +23,13 @@ locals {
       spoolDir    = "/var/lib/fdrop/spool"
     }
     auth = {
-      oidc = {
+      oidc = merge({
         issuer           = var.oidc_issuer
         webClientSecret  = "$${FDROP_AUTH_OIDC_WEBCLIENTSECRET}"
         redirectUri      = "${local.public_url}/auth/callback"
         sftpClientSecret = "$${FDROP_AUTH_OIDC_SFTPCLIENTSECRET}"
-      }
+        # Keycloak's public URL has a certificate from the public issuer; a self-signed one (kind) is trusted here
+      }, var.trust_public_ca ? { trustedCas = "/etc/fdrop/tls/ca.crt" } : {})
       twoFactor = { require = var.two_factor }
     }
     forward = {
@@ -42,6 +44,7 @@ locals {
         region           = var.s3.region
         endpointOverride = var.s3.endpoint
         pathStyle        = true
+        trustedCas       = "/etc/fdrop/internal-ca/ca.crt" # Garage's TLS sidecars have internal-CA certificates
       }
       encryption = merge(
         { enabled = true, keyProvider = var.storage_encryption.provider },
@@ -103,19 +106,12 @@ resource "kubernetes_secret_v1" "sftp_host_key" {
   data = { ssh_host_ed25519_key = var.secrets.sftp_host_key }
 }
 
-resource "random_password" "truststore" {
-  count   = var.trust_public_ca ? 1 : 0
-  length  = 24
-  special = false
-}
-
-resource "kubernetes_secret_v1" "truststore_password" {
-  count = var.trust_public_ca ? 1 : 0
+resource "kubernetes_config_map_v1" "internal_ca" {
   metadata {
-    name      = "fdrop-truststore-password"
+    name      = "fdrop-internal-ca"
     namespace = var.namespace
   }
-  data = { password = random_password.truststore[0].result }
+  data = { "ca.crt" = var.internal_ca }
 }
 
 resource "kubernetes_config_map_v1" "config" {
@@ -126,23 +122,20 @@ resource "kubernetes_config_map_v1" "config" {
   data = { "fdrop.yaml" = local.config_yaml }
 }
 
-# fdrop's own certificate, for its HTTPS port (behind Traefik) and its mTLS port (passed straight through to clients);
-# with trust_public_ca, also a truststore holding the issuing CA, for calls to Keycloak's public URL
+# fdrop's own certificate, for its HTTPS port (behind Traefik), its mTLS port (passed straight through to clients) and
+# its management port
 resource "kubectl_manifest" "certificate" {
   yaml_body = yamlencode({
     apiVersion = "cert-manager.io/v1"
     kind       = "Certificate"
     metadata   = { name = "fdrop-public", namespace = var.namespace }
-    spec = merge({
+    spec = {
       secretName = "fdrop-public-tls"
       dnsNames   = distinct([var.hostname, var.mtls_hostname])
       privateKey = { algorithm = "ECDSA", size = 256, rotationPolicy = "Always" }
       issuerRef  = { name = var.public_issuer, kind = "ClusterIssuer" }
-      }, var.trust_public_ca ? {
-      keystores = { pkcs12 = { create = true, passwordSecretRef = { name = "fdrop-truststore-password", key = "password" } } }
-    } : {})
+    }
   })
-  depends_on = [kubernetes_secret_v1.truststore_password]
 }
 
 resource "kubectl_manifest" "statefulset" {
@@ -195,27 +188,26 @@ resource "kubectl_manifest" "statefulset" {
               { name = "management", containerPort = 8081 },
             ]
             envFrom = [{ secretRef = { name = "fdrop" } }]
-            env = concat([
+            env = [
               { name = "FDROP_CONFIG", value = "/etc/fdrop/fdrop.yaml" },
               # the pod's stable name is its audit chain's node
               { name = "FDROP_AUDIT_NODE", valueFrom = { fieldRef = { fieldPath = "metadata.name" } } },
               # the heap leaves room in the limit for the forked text extractor
               { name = "JDK_JAVA_OPTIONS", value = "-XX:MaxRAMPercentage=50" },
-              ], [for e in [
-                { name = "TRUSTSTORE_PASSWORD", valueFrom = { secretKeyRef = { name = "fdrop-truststore-password", key = "password" } } },
-                { name = "JAVA_TOOL_OPTIONS", value = "-Djavax.net.ssl.trustStore=/etc/fdrop/tls/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=$(TRUSTSTORE_PASSWORD)" },
-            ] : e if var.trust_public_ca])
+            ]
             volumeMounts = [
               { name = "config", mountPath = "/etc/fdrop/fdrop.yaml", subPath = "fdrop.yaml", readOnly = true },
               { name = "tls", mountPath = "/etc/fdrop/tls", readOnly = true },
+              { name = "internal-ca", mountPath = "/etc/fdrop/internal-ca", readOnly = true },
               { name = "db", mountPath = "/etc/fdrop/db", readOnly = true },
               { name = "sftp-host-key", mountPath = "/etc/fdrop/sftp", readOnly = true },
               { name = "data", mountPath = "/var/lib/fdrop" },
               { name = "tmp", mountPath = "/tmp" },
             ]
-            startupProbe   = { httpGet = { path = "/healthz", port = "management" }, periodSeconds = 5, failureThreshold = 60 }
-            livenessProbe  = { httpGet = { path = "/healthz", port = "management" }, periodSeconds = 15, failureThreshold = 4 }
-            readinessProbe = { httpGet = { path = "/readyz", port = "management" }, periodSeconds = 10, failureThreshold = 3 }
+            # the management port is HTTPS too (the kubelet does not check the certificate)
+            startupProbe   = { httpGet = { path = "/healthz", port = "management", scheme = "HTTPS" }, periodSeconds = 5, failureThreshold = 60 }
+            livenessProbe  = { httpGet = { path = "/healthz", port = "management", scheme = "HTTPS" }, periodSeconds = 15, failureThreshold = 4 }
+            readinessProbe = { httpGet = { path = "/readyz", port = "management", scheme = "HTTPS" }, periodSeconds = 10, failureThreshold = 3 }
             resources = {
               requests = { cpu = var.resources.cpu_request, memory = var.resources.memory_request }
               limits   = { memory = var.resources.memory_limit }
@@ -229,6 +221,7 @@ resource "kubectl_manifest" "statefulset" {
           volumes = [
             { name = "config", configMap = { name = "fdrop" } },
             { name = "tls", secret = { secretName = "fdrop-public-tls" } },
+            { name = "internal-ca", configMap = { name = "fdrop-internal-ca" } },
             { name = "db", secret = { secretName = var.db_client_secret, defaultMode = 288 } }, # 0440, readable through fsGroup
             { name = "sftp-host-key", secret = { secretName = "fdrop-sftp-host-key", defaultMode = 288 } },
             { name = "tmp", emptyDir = { sizeLimit = "2Gi" } },
@@ -247,7 +240,7 @@ resource "kubectl_manifest" "statefulset" {
     }
   })
   depends_on = [
-    kubernetes_config_map_v1.config, kubernetes_secret_v1.env, kubernetes_secret_v1.sftp_host_key,
+    kubernetes_config_map_v1.config, kubernetes_config_map_v1.internal_ca, kubernetes_secret_v1.env, kubernetes_secret_v1.sftp_host_key,
     kubectl_manifest.certificate, kubernetes_service_account_v1.fdrop, kubernetes_service_v1.headless,
   ]
 }

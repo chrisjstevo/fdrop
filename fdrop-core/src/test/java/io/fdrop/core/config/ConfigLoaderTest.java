@@ -11,10 +11,20 @@ class ConfigLoaderTest {
     @Test
     void defaultsWithoutAFile() {
         FdropConfig c = new ConfigLoader(Map.of()).loadFromString("{}");
-        assertThat(c.http.port).isEqualTo(8080);
+        assertThat(c.http.port).isEqualTo(8443);
         assertThat(c.management.port).isEqualTo(8081);
         assertThat(c.upload.chunkSize.bytes()).isEqualTo(8L * 1024 * 1024);
         assertThat(c.storage.type).isEqualTo("local");
+    }
+
+    @Test
+    void thePlainHttpSwitchesAreGone() {
+        // a config still carrying them fails at start rather than silently serving something else
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new ConfigLoader(Map.of())
+                .loadFromString("http: { tls: { enabled: false } }")).hasMessageContaining("enabled");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new ConfigLoader(Map.of())
+                .loadFromString("auth: { applications: { basicWithoutTls: true } }"))
+                .hasMessageContaining("basicWithoutTls");
     }
 
     @Test

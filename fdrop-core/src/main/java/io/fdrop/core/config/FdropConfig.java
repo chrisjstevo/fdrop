@@ -28,12 +28,13 @@ public class FdropConfig {
     public Limits limits = new Limits();
 
     public static class Http {
-        public int port = 8080;
+        /** HTTPS only: there is no plain-HTTP listener (see "Security" in SPEC.md). */
+        public int port = 8443;
         public String bind = "0.0.0.0";
         public Tls tls = new Tls();
         public DataSize simpleUploadMax = DataSize.ofMiB(64);
         public List<String> trustedProxies = new ArrayList<>();
-        /** Public base URL as browsers see it, used for redirects; defaults to http://localhost:{port}. */
+        /** Public base URL as browsers see it, used for redirects; defaults to https://localhost:{port}. */
         public String publicUrl;
         public Mtls mtls = new Mtls();
     }
@@ -45,8 +46,8 @@ public class FdropConfig {
         public String bind = "0.0.0.0";
     }
 
+    /** The certificate of every fdrop listener (web, mTLS, management); required, as fdrop serves HTTPS only. */
     public static class Tls {
-        public boolean enabled = false;
         public String cert = "/etc/fdrop/tls.crt";
         public String key = "/etc/fdrop/tls.key";
     }
@@ -85,8 +86,6 @@ public class FdropConfig {
         public String passwordMaxAge = "365d";
         /** Warn this long before a password or certificate expires. */
         public List<String> expiryWarnings = new ArrayList<>(List.of("30d", "7d"));
-        /** Accept HTTP Basic on plain HTTP. Development only: production needs TLS or a trusted TLS proxy. */
-        public boolean basicWithoutTls = false;
         public AppMtls mtls = new AppMtls();
 
         public Duration passwordMaxAgeDuration() {
@@ -114,7 +113,10 @@ public class FdropConfig {
     }
 
     public static class Oidc {
-        public String issuer = "http://localhost:8180/realms/fdrop";
+        /** https only. */
+        public String issuer = "https://localhost:8180/realms/fdrop";
+        /** PEM bundle trusted for calls to Keycloak, besides the JDK's trust store; null for the JDK's alone. */
+        public String trustedCas;
         public String webClientId = "fdrop-web";
         public String webClientSecret = "";
         public String redirectUri;
@@ -210,7 +212,10 @@ public class FdropConfig {
         public String bucket = "";
         public String prefix = "";
         public String region = "us-east-1";
+        /** https only. */
         public String endpointOverride;
+        /** PEM bundle trusted for calls to the S3 endpoint, besides the JDK's trust store. */
+        public String trustedCas;
         public boolean pathStyle = false;
         public String sse;
     }

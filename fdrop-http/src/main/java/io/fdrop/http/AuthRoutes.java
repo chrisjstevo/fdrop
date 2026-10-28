@@ -42,7 +42,7 @@ final class AuthRoutes {
     private String publicUrl() {
         String u = app.config.http.publicUrl;
         if (u == null || u.isBlank()) {
-            u = (app.config.http.tls.enabled ? "https" : "http") + "://localhost:" + app.config.http.port;
+            u = "https://localhost:" + app.config.http.port;
         }
         return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
     }

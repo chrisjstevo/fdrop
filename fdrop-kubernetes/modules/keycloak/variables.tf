@@ -30,6 +30,12 @@ variable "public_issuer" {
   type        = string
 }
 
+variable "internal_issuer" {
+  description = "cert-manager ClusterIssuer of the cluster's internal CA, for Keycloak's own certificate."
+  type        = string
+  default     = "fdrop-internal-ca"
+}
+
 variable "db_host" {
   type = string
 }

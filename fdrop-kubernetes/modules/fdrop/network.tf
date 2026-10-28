@@ -88,7 +88,7 @@ resource "kubernetes_network_policy_v1" "fdrop" {
         }
       }
       ports {
-        port     = "3900"
+        port     = local.s3_port # Garage's TLS sidecar
         protocol = "TCP"
       }
     }

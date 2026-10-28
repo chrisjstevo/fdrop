@@ -1,6 +1,6 @@
 output "endpoint" {
-  description = "fdrop's storage.s3.endpointOverride."
-  value       = "http://garage.${var.namespace}.svc:3900"
+  description = "fdrop's storage.s3.endpointOverride: HTTPS, with a certificate from the internal CA."
+  value       = "https://garage.${var.namespace}.svc:3443"
 }
 
 output "bucket" {

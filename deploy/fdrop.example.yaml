@@ -3,7 +3,7 @@
 http:
   port: 8443
   publicUrl: https://fdrop.example.com
-  tls: { enabled: true, cert: /etc/fdrop/tls.crt, key: /etc/fdrop/tls.key }
+  tls: { cert: /etc/fdrop/tls.crt, key: /etc/fdrop/tls.key }   # required: every listener is HTTPS only
   simpleUploadMax: 64MiB
   trustedProxies: []    # CIDRs of reverse proxies / load balancers whose Forwarded, X-Forwarded-For and PROXY headers are believed
   mtls:
@@ -22,7 +22,8 @@ sftp:
   proxyProtocol: false  # accept HAProxy PROXY v1/v2 from http.trustedProxies, to record real client IPs behind a TCP load balancer
 auth:
   oidc:
-    issuer: https://sso.example.com/realms/fdrop
+    issuer: https://sso.example.com/realms/fdrop   # https only
+    trustedCas: null           # PEM bundle for a Keycloak certificate from a private CA, added to the JDK's CAs
     webClientId: fdrop-web
     webClientSecret: ${FDROP_AUTH_OIDC_WEBCLIENTSECRET}
     redirectUri: https://fdrop.example.com/auth/callback
@@ -43,7 +44,6 @@ auth:
     group: fdrop-applications   # Keycloak group whose members are application accounts (role mapping: appRole)
     passwordMaxAge: 365d        # 0 = passwords never expire
     expiryWarnings: [30d, 7d]   # log, audit and fdrop_app_credentials_expiring before a password or certificate expires
-    basicWithoutTls: false      # development only
     mtls:
       trustedCas: /etc/fdrop/app-client-ca.pem   # PEM bundle; pinned certificates need no CA
       crls: []                  # optional CRL files or URLs
@@ -62,7 +62,8 @@ storage:
     bucket: my-fdrop
     prefix: prod/
     region: eu-west-1
-    endpointOverride: null   # e.g. http://minio:9000
+    endpointOverride: null   # e.g. https://minio.internal:9000 (https only)
+    trustedCas: null         # PEM bundle for an endpoint certificate from a private CA, added to the JDK's CAs
     pathStyle: false
     sse: AES256
   encryption:                # encryption at rest, see SPEC.md

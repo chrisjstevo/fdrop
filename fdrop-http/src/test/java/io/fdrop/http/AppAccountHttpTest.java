@@ -41,13 +41,13 @@ class AppAccountHttpTest {
     @TempDir
     Path dir;
 
-    TestCerts.Issued serverCa = TestCerts.ca("Server CA");
+    TestCerts.Issued serverCa = TestSupport.serverCa();
     TestCerts.Issued clientCa = TestCerts.ca("Client CA");
     FakeDirectory directory = new FakeDirectory();
     FdropConfig cfg;
     Fdrop app;
     HttpServer server;
-    HttpClient http = HttpClient.newHttpClient();
+    HttpClient http = TestSupport.httpClient();
     String base;
     String mtlsBase;
 
@@ -57,22 +57,18 @@ class AppAccountHttpTest {
         cfg.http.port = 0;
         cfg.http.mtls.enabled = true;
         cfg.http.mtls.port = 0;
-        Path[] server = TestCerts.server(serverCa).write(dir, "server");
-        cfg.http.tls.cert = server[0].toString();
-        cfg.http.tls.key = server[1].toString();
         Path cas = dir.resolve("client-cas.pem");
         Files.writeString(cas, clientCa.certPem());
         cfg.auth.applications.mtls.trustedCas = cas.toString();
         cfg.auth.applications.mtls.proxyHeader = "X-Client-Cert";
         cfg.http.trustedProxies.addAll(List.of("127.0.0.1", "::1"));
         cfg.auth.twoFactor.require = "none";
-        cfg.auth.session.secureCookie = false;
         Path files = Files.createDirectories(dir.resolve("files"));
         LocalStorageBackend b = new LocalStorageBackend();
         b.init(files);
         app = TestSupport.fdrop(cfg, b, directory);
         this.server = new HttpServer(app).start();
-        base = "http://localhost:" + this.server.port();
+        base = "https://localhost:" + this.server.port();
         mtlsBase = "https://localhost:" + this.server.mtlsPort();
         // the people involved must have signed in once
         send(bearer("/api/v1/me", ADMIN));
@@ -144,20 +140,18 @@ class AppAccountHttpTest {
         assertThat(password).hasSize(32);
         assertThat(created.path("account").path("responsible").asText()).isEqualTo("alice");
 
-        // Basic needs TLS: refused on plain HTTP, accepted from a trusted proxy that terminated TLS
-        assertThat(send(basic("/api/v1/me", "app-erp", password)).statusCode()).isEqualTo(401);
-        HttpResponse<String> me = send(basic("/api/v1/me", "app-erp", password).header("X-Forwarded-Proto", "https"));
+        HttpResponse<String> me = send(basic("/api/v1/me", "app-erp", password));
         assertThat(me.statusCode()).as(me.body()).isEqualTo(200);
         assertThat(Json.MAPPER.readTree(me.body()).path("kind").asText()).isEqualTo("application");
-        assertThat(send(basic("/api/v1/me", "app-erp", "wrong").header("X-Forwarded-Proto", "https"))
+        assertThat(send(basic("/api/v1/me", "app-erp", "wrong"))
                 .statusCode()).isEqualTo(401);
 
         // a new password replaces the old one at once, even though the old one was cached
         String fresh = admin("POST", "/api/v1/admin/app-accounts/" + id + "/password", null).path("password").asText();
         assertThat(fresh).isNotEqualTo(password);
-        assertThat(send(basic("/api/v1/me", "app-erp", password).header("X-Forwarded-Proto", "https")).statusCode())
+        assertThat(send(basic("/api/v1/me", "app-erp", password)).statusCode())
                 .isEqualTo(401);
-        assertThat(send(basic("/api/v1/me", "app-erp", fresh).header("X-Forwarded-Proto", "https")).statusCode())
+        assertThat(send(basic("/api/v1/me", "app-erp", fresh)).statusCode())
                 .isEqualTo(200);
 
         JsonNode list = admin("GET", "/api/v1/admin/app-accounts", null);
@@ -167,7 +161,6 @@ class AppAccountHttpTest {
 
     @Test
     void basicIsForApplicationAccountsOnly() throws Exception {
-        cfg.auth.applications.basicWithoutTls = true;
         // alice's password is her name in the fake identity provider
         assertThat(send(basic("/api/v1/me", "alice", "alice")).statusCode()).isEqualTo(401);
         // and application accounts cannot use bearer tokens
@@ -242,11 +235,11 @@ class AppAccountHttpTest {
 
         String password = pwOnly.path("password").asText();
         admin("PATCH", "/api/v1/admin/app-accounts/" + id, Map.of("allowedSources", List.of("10.0.0.0/8")));
-        assertThat(send(basic("/api/v1/me", "app-pw", password).header("X-Forwarded-Proto", "https")).statusCode())
+        assertThat(send(basic("/api/v1/me", "app-pw", password)).statusCode())
                 .isEqualTo(401);
         admin("PATCH", "/api/v1/admin/app-accounts/" + id,
                 Map.of("allowedSources", List.of("127.0.0.0/8", "::1/128")));
-        assertThat(send(basic("/api/v1/me", "app-pw", password).header("X-Forwarded-Proto", "https")).statusCode())
+        assertThat(send(basic("/api/v1/me", "app-pw", password)).statusCode())
                 .isEqualTo(200);
 
         String scrape = app.metrics.scrape(null);
@@ -256,7 +249,6 @@ class AppAccountHttpTest {
 
     @Test
     void expiredPasswordsAreRefused() throws Exception {
-        cfg.auth.applications.basicWithoutTls = true;
         JsonNode created = createApp("app-old", List.of("PASSWORD"), List.of());
         cfg.auth.applications.passwordMaxAge = "1ms";
         Thread.sleep(5);
@@ -269,7 +261,6 @@ class AppAccountHttpTest {
 
     @Test
     void secondFactorsAreNeverAskedForAndAreRemoved() throws Exception {
-        cfg.auth.applications.basicWithoutTls = true;
         JsonNode created = createApp("app-otp", List.of("PASSWORD"), List.of());
         directory.withOtp("app-otp");
         assertThat(send(basic("/api/v1/me", "app-otp", created.path("password").asText())).statusCode())
@@ -279,7 +270,6 @@ class AppAccountHttpTest {
 
     @Test
     void applicationAccountsAreMembersOnly() throws Exception {
-        cfg.auth.applications.basicWithoutTls = true;
         String password = createApp("app-member", List.of("PASSWORD"), List.of()).path("password").asText();
         String alice = "user:alice";
         JsonNode folder = Json.MAPPER.readTree(send(bearer("/api/v1/folders", alice)
@@ -330,7 +320,6 @@ class AppAccountHttpTest {
 
     @Test
     void deletingAnAccountRemovesItsAccess() throws Exception {
-        cfg.auth.applications.basicWithoutTls = true;
         JsonNode created = createApp("app-gone", List.of("PASSWORD"), List.of());
         String id = created.path("account").path("id").asText();
         String password = created.path("password").asText();

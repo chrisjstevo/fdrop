@@ -4,6 +4,12 @@ variable "cert_manager" {
   default     = true
 }
 
+variable "cert_manager_namespace" {
+  description = "cert-manager's namespace, where a ClusterIssuer's CA Secret must be (its cluster resource namespace)."
+  type        = string
+  default     = "cert-manager"
+}
+
 variable "cloudnative_pg" {
   description = "Install the CloudNativePG operator."
   type        = bool

@@ -59,7 +59,7 @@ browser warns about it until you trust the dev CA. Dev users (development only):
 | chris | chris | standard |
 | app-demo | app-demo | application account |
 
-The Keycloak admin console is http://localhost:8180/admin (admin / admin), Prometheus is http://localhost:9090, and
+The Keycloak admin console is https://localhost:8180/admin (admin / admin), Prometheus is http://localhost:9090, and
 SFTP is `sftp -P 2222 jugash@localhost`.
 
 ### Development certificates
@@ -70,8 +70,8 @@ Both Compose stacks start with a one-shot `certs` service that runs [scripts/dev
 
 | File | What it is |
 | --- | --- |
-| `ca.crt`, `ca.key` | The dev CA. fdrop trusts it for application client certificates, and Keycloak for its calls to fdrop |
-| `server.crt`, `server.key` | The `localhost` certificate for fdrop's HTTPS (8443) and mTLS (8444) ports, and the Vite dev server |
+| `ca.crt`, `ca.key` | The dev CA. fdrop trusts it for application client certificates and for Keycloak, Keycloak for its calls to fdrop, and Prometheus for scraping fdrop |
+| `server.crt`, `server.key` | The `localhost` certificate for fdrop's HTTPS (8443), mTLS (8444) and management (8081) ports, Keycloak's HTTPS (8180), and the Vite dev server |
 | `app-demo.crt`, `app-demo.key` | A client certificate for the `app-demo` application account (SAN `DNS:app-demo.fdrop.local`) |
 
 Existing certificates are kept, and remade a week before they expire; delete the folder to start over. To stop the
@@ -157,7 +157,7 @@ from [deploy/compose/compose.yaml](deploy/compose/compose.yaml). No JDK is neede
    ```
 
 4. Open https://localhost:8443 and sign in as one of the dev users listed above. SFTP is on port 2222, the application mTLS
-   listener on 8444, and `curl http://localhost:8081/readyz` reports readiness.
+   listener on 8444, and `curl --cacert deploy/compose/certs/ca.crt https://localhost:8081/readyz` reports readiness.
 
 After a code change, repeat step 1, then recreate just fdrop:
 
@@ -357,10 +357,10 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
 
 | Port | Purpose |
 | --- | --- |
-| 8443 (8080 if `http.tls` is off) | Browser UI, REST API, sign-in; HTTPS only in the dev and demo stacks |
+| 8443 | Browser UI, REST API, sign-in. Every port is HTTPS only: there is no plain-HTTP listener or setting |
 | 2222 | SFTP |
 | 8444 | Application accounts' client certificates (mTLS): REST API only, when `http.mtls.enabled` |
-| 8081 | Management: `/metrics`, `/healthz`, `/readyz` (never publish to the internet) |
+| 8081 | Management over HTTPS: `/metrics`, `/healthz`, `/readyz` (never publish to the internet) |
 
 ## Differences from the spec
 
