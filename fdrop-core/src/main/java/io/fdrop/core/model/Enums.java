@@ -21,9 +21,9 @@ public final class Enums {
      * Status of an {@code upload_record}. Folder uploads use STORED, MOVED, DELETED; forward uploads mirror their
      * forward job's state.
      */
-    public enum RecordStatus { STORED, MOVED, DELETED, EXPIRED, QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED }
+    public enum RecordStatus { STORED, MOVED, DELETED, EXPIRED, QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED, CANCELLED }
 
-    public enum JobState { QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED }
+    public enum JobState { QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED, CANCELLED }
 
     public enum ServerAuth { HOST_KEY, HOST_CA }
 

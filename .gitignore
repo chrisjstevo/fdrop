@@ -7,8 +7,9 @@ node_modules/
 .idea/
 .vscode/
 .DS_Store
-# dev container: the developer's local copy of fdrop's forward key for sftp-target
+# dev container: the developer's local copies of fdrop's forward keys for sftp-target and sftp-target2
 .devcontainer/sftp-target/authorized_keys
+.devcontainer/sftp-target2/authorized_keys
 # never commit real configuration
 fdrop.yaml
 # dev certificates, created by scripts/dev-certs.sh when the Compose stacks start

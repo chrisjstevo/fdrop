@@ -11,17 +11,17 @@ import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.RecordStatus;
 import io.fdrop.core.model.Enums.Via;
 import io.fdrop.core.model.Enums.WentTo;
-import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardJob;
 import io.fdrop.core.model.Records.UploadRecord;
 import io.fdrop.core.storage.ObjectInfo;
 import io.fdrop.core.util.Hashing;
 
+import java.util.List;
 import java.util.Locale;
 
 /**
  * Called once per finished upload, whichever way it arrived: writes the {@code upload_record} row behind the My
- * uploads page and, for forward folders, queues the forward job in the same transaction.
+ * uploads page and, for forward folders, queues one forward job per destination in the same transaction.
  */
 public final class UploadRecorder {
 
@@ -50,6 +50,11 @@ public final class UploadRecorder {
         this.listener = l;
     }
 
+    /** Tells the forward workers that jobs were queued outside an upload (a destination added to a folder). */
+    public void jobsQueued() {
+        listener.jobQueued();
+    }
+
     public UploadRecord record(Principal p, VirtualPath vp, ObjectInfo info, Via via, String clientIp,
                                String startIp) {
         long now = System.currentTimeMillis();
@@ -62,11 +67,17 @@ public final class UploadRecorder {
             records.insert(rec);
             search.append(SearchRepo.Op.INDEX, info.path().toString(), null);
             if (wentTo == WentTo.FORWARD) {
-                FolderForward ff = folders.forward(vp.folder().id())
-                        .orElseThrow(() -> new IllegalStateException("forward folder without settings"));
-                records.insertJob(new ForwardJob(Hashing.newId("job"), vp.folder().id(), ff.destinationId(),
-                        rec.id(), info.path().toString(), vp.name(), info.size(), JobState.QUEUED, 0, null, 0, null,
-                        now, now, null));
+                List<String> dests = folders.destinations(vp.folder().id());
+                if (dests.isEmpty()) {
+                    throw new IllegalStateException("forward folder without destinations");
+                }
+                // one job per destination, so each destination receives its own copy; consecutive creation
+                // times keep a file's jobs listed in the folder's destination order
+                for (int i = 0; i < dests.size(); i++) {
+                    records.insertJob(new ForwardJob(Hashing.newId("job"), vp.folder().id(), dests.get(i), rec.id(),
+                            info.path().toString(), vp.name(), info.size(), JobState.QUEUED, 0, null, 0, null,
+                            now + i, now, null, null, null));
+                }
                 return true;
             }
             return false;

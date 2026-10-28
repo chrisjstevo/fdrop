@@ -1,4 +1,4 @@
-import * as Select from "@radix-ui/react-select";
+import * as Menu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
@@ -9,41 +9,59 @@ import { Badge, Button, Dialog, DialogActions, Empty, ErrorNote, Field, LinkButt
 import { expiryProblem, longerThan, parseExpiry } from "../util/expiry";
 import { formatBytes, formatDate } from "../util/format";
 import { filesLink } from "./FilesPage";
-import { JobBadge } from "./status";
+import { FileForwardBadge, groupJobs, JobBadge, type FileJobs } from "./status";
 import s from "./pages.module.css";
 import sel from "./select.module.css";
 
-/** The destination drop-down: only destinations an admin has assigned to this user. */
-export function DestinationSelect({
+/**
+ * The destination multi-select: a drop-down of the destinations an admin has assigned to this user, where each
+ * one ticked receives its own copy of every file. Stays open while ticking, so several can be chosen at once.
+ */
+export function DestinationPicker({
   id,
   value,
   onChange,
   options,
+  max,
 }: {
   id: string;
-  value: string;
-  onChange: (v: string) => void;
+  value: string[];
+  onChange: (v: string[]) => void;
   options: DestinationOption[];
+  max: number;
 }) {
+  const names = value.map((v) => options.find((o) => o.id === v)?.name ?? v);
+  const toggle = (destId: string, on: boolean) =>
+    onChange(on ? [...value.filter((v) => v !== destId), destId] : value.filter((v) => v !== destId));
   return (
-    <Select.Root value={value} onValueChange={onChange}>
-      <Select.Trigger id={id} className={sel.trigger} aria-label="Destination">
-        <Select.Value placeholder="Choose a destination" />
-        <Select.Icon aria-hidden="true">▾</Select.Icon>
-      </Select.Trigger>
-      <Select.Portal>
-        <Select.Content className={sel.content} position="popper" sideOffset={4}>
-          <Select.Viewport>
-            {options.map((o) => (
-              <Select.Item key={o.id} value={o.id} className={sel.item}>
-                <Select.ItemText>{o.name}</Select.ItemText>
+    <Menu.Root modal={false}>
+      <Menu.Trigger id={id} className={sel.trigger} aria-label={`Destinations: ${names.join(", ") || "none chosen"}`}>
+        <span>{names.length ? names.join(", ") : "Choose destinations"}</span>
+        <span aria-hidden="true">▾</span>
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Content className={sel.content} align="start" sideOffset={4}>
+          {options.map((o) => {
+            const checked = value.includes(o.id);
+            return (
+              <Menu.CheckboxItem
+                key={o.id}
+                className={sel.item}
+                checked={checked}
+                disabled={!checked && value.length >= max}
+                onCheckedChange={(on) => toggle(o.id, on === true)}
+                onSelect={(e) => e.preventDefault()}
+              >
+                <span className={sel.check}>
+                  <span aria-hidden="true">{checked ? "☑" : "☐"}</span> {o.name}
+                </span>
                 {o.description && <span className={sel.desc}>{o.description}</span>}
-              </Select.Item>
-            ))}
-          </Select.Viewport>
-        </Select.Content>
-      </Select.Portal>
-    </Select.Root>
+              </Menu.CheckboxItem>
+            );
+          })}
+        </Menu.Content>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 
@@ -80,7 +98,7 @@ export function FoldersPage() {
                 <th scope="col">Type</th>
                 <th scope="col">Owner</th>
                 <th scope="col">Your access</th>
-                <th scope="col">Destination</th>
+                <th scope="col">Destinations</th>
               </tr>
             </thead>
             <tbody>
@@ -133,8 +151,9 @@ function CreateFolderDialog({ type, onClose }: { type: "shared" | "forward" | nu
   const client = useQueryClient();
   const me = useMe();
   const [name, setName] = useState("");
-  const [destination, setDestination] = useState("");
+  const [chosen, setChosen] = useState<string[]>([]);
   const [keepDays, setKeepDays] = useState(0);
+  const max = me.data?.settings.maxDestinationsPerFolder ?? 5;
   const dests = useQuery({
     queryKey: ["destinations-mine"],
     enabled: type === "forward",
@@ -142,7 +161,7 @@ function CreateFolderDialog({ type, onClose }: { type: "shared" | "forward" | nu
   });
   useEffect(() => {
     setName("");
-    setDestination("");
+    setChosen([]);
     setKeepDays(0);
   }, [type]);
   const m = useMutation({
@@ -150,7 +169,7 @@ function CreateFolderDialog({ type, onClose }: { type: "shared" | "forward" | nu
       post<FolderView>("/api/v1/folders", {
         type,
         name: name.trim(),
-        destinationId: type === "forward" ? destination : undefined,
+        destinationIds: type === "forward" ? chosen : undefined,
         keepDays: type === "forward" ? keepDays : undefined,
       }),
     onSuccess: (f) => {
@@ -169,7 +188,7 @@ function CreateFolderDialog({ type, onClose }: { type: "shared" | "forward" | nu
       title={type === "forward" ? "New forward folder" : "New shared folder"}
       description={
         type === "forward"
-          ? "Every file dropped in this folder is sent to the destination you choose."
+          ? "Every file dropped in this folder is sent to each destination you choose."
           : "You will own the folder and choose who can see it."
       }
     >
@@ -195,8 +214,12 @@ function CreateFolderDialog({ type, onClose }: { type: "shared" | "forward" | nu
           </Field>
           {type === "forward" && (
             <>
-              <Field label="Destination" htmlFor="folder-destination">
-                <DestinationSelect id="folder-destination" value={destination} onChange={setDestination} options={options} />
+              <Field
+                label="Destinations"
+                htmlFor="folder-destination"
+                hint={`Each one gets its own copy of every file. Choose up to ${max}.`}
+              >
+                <DestinationPicker id="folder-destination" value={chosen} onChange={setChosen} options={options} max={max} />
               </Field>
               <Field label="After sending" htmlFor="keep-days">
                 <select id="keep-days" value={keepDays} onChange={(e) => setKeepDays(Number(e.target.value))}>
@@ -214,7 +237,7 @@ function CreateFolderDialog({ type, onClose }: { type: "shared" | "forward" | nu
             <Button
               type="submit"
               variant="primary"
-              disabled={!name.trim() || (type === "forward" && !destination) || m.isPending}
+              disabled={!name.trim() || (type === "forward" && chosen.length === 0) || m.isPending}
             >
               Create folder
             </Button>
@@ -254,11 +277,6 @@ export function FolderDetailPage() {
       navigate("/folders");
     },
   });
-  const retry = useMutation({
-    mutationFn: (jobId: string) => post(`/api/v1/folders/${q(id)}/forward-jobs/${q(jobId)}/retry`),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ["jobs", id] }),
-  });
-
   if (folder.isError) {
     return (
       <>
@@ -300,9 +318,22 @@ export function FolderDetailPage() {
         <dd>{f.role === "OWNER" ? "Owner" : f.role === "WRITE" ? "Read-write" : "Read-only"}</dd>
         {f.type === "FORWARD" && (
           <>
-            <dt>Destination</dt>
+            <dt>{(f.destinations ?? []).length > 1 ? "Destinations" : "Destination"}</dt>
             <dd>
-              {f.destinationName ?? "–"} {f.paused && <Badge kind="warn">Paused</Badge>}
+              {(f.destinations ?? []).length === 0
+                ? "–"
+                : f.destinations!.map((d, i) => (
+                    <span key={d.id}>
+                      {i > 0 && ", "}
+                      {d.name}
+                      {d.paused && (
+                        <>
+                          {" "}
+                          <Badge kind="warn">Paused</Badge>
+                        </>
+                      )}
+                    </span>
+                  ))}
             </dd>
             <dt>After sending</dt>
             <dd>{f.keepDays ? `Kept for ${f.keepDays} days` : "Deleted from fdrop"}</dd>
@@ -322,74 +353,7 @@ export function FolderDetailPage() {
       {isOwner && <MembersPanel folder={f} onChanged={refresh} onTransfer={setTransfer} />}
 
       {f.type === "FORWARD" && (
-        <section className={s.section}>
-          <h2>Forward status</h2>
-          <ErrorNote>{retry.error?.message}</ErrorNote>
-          {(jobs.data ?? []).length === 0 ? (
-            <Empty title="Nothing forwarded yet" />
-          ) : (
-            <div className={s.listWrap}>
-              <table className={s.table}>
-                <thead>
-                  <tr>
-                    <th scope="col">File</th>
-                    <th scope="col" className={s.num}>
-                      Size
-                    </th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Arrived</th>
-                    <th scope="col">Details</th>
-                    <th scope="col">
-                      <span className="visually-hidden">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.data!.map((j) => (
-                    <tr key={j.id}>
-                      <td>{j.fileName}</td>
-                      <td className={s.num}>{formatBytes(j.size)}</td>
-                      <td>
-                        <JobBadge state={j.state} />
-                      </td>
-                      <td>{formatDate(j.createdAt)}</td>
-                      <td className="muted">
-                        {j.state === "SENT" ? `Sent ${formatDate(j.sentAt)}` : j.lastError ?? ""}
-                        {j.state === "RETRY_WAIT" && j.nextAttemptAt ? ` Next try ${formatDate(j.nextAttemptAt)}.` : ""}
-                      </td>
-                      <td>
-                        {isOwner && j.state === "FAILED" && (
-                          <Button small onClick={() => retry.mutate(j.id)}>
-                            Retry
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <ul className={s.cards}>
-                {jobs.data!.map((j) => (
-                  <li key={j.id} className={s.card}>
-                    <div className={s.cardBody}>
-                      <div className={s.cardTitle}>{j.fileName}</div>
-                      <div className={s.cardMeta}>
-                        <JobBadge state={j.state} />
-                        <span>{formatBytes(j.size)}</span>
-                        {j.lastError && <span>{j.lastError}</span>}
-                      </div>
-                    </div>
-                    {isOwner && j.state === "FAILED" && (
-                      <Button small onClick={() => retry.mutate(j.id)}>
-                        Retry
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </section>
+        <ForwardStatus folderId={id} jobs={jobs.data ?? []} isOwner={isOwner} onChanged={() => void jobs.refetch()} />
       )}
 
       <DeleteFolderDialog
@@ -409,8 +373,12 @@ export function FolderDetailPage() {
 }
 
 function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () => void }) {
+  const me = useMe();
   const [name, setName] = useState(folder.name);
-  const [destination, setDestination] = useState(folder.destinationId ?? "");
+  const current = (folder.destinations ?? []).map((d) => d.id);
+  const [chosen, setChosen] = useState<string[]>(current);
+  const [sendExisting, setSendExisting] = useState(false);
+  const max = me.data?.settings.maxDestinationsPerFolder ?? 5;
   const [keepDays, setKeepDays] = useState(folder.keepDays ?? 0);
   const [defaultExpiry, setDefaultExpiry] = useState(folder.defaultExpiry ?? "");
   const [maxExpiry, setMaxExpiry] = useState(folder.maxExpiry ?? "");
@@ -429,11 +397,21 @@ function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () =>
       ? "The default can't be longer than the maximum"
       : undefined;
   const maxChanged = shared && maxExpiry.trim() !== (folder.maxExpiry ?? "") && !!maxExpiry.trim();
+  // the owner's assigned destinations, plus any the folder has that are no longer assigned, so they can be removed
+  const options = [
+    ...(dests.data ?? []),
+    ...(folder.destinations ?? [])
+      .filter((d) => !(dests.data ?? []).some((o) => o.id === d.id))
+      .map((d) => ({ id: d.id, name: `${d.name} (no longer assigned)` })),
+  ];
+  const added = chosen.filter((c) => !current.includes(c));
+  const destinationsChanged = added.length > 0 || current.some((c) => !chosen.includes(c));
   const m = useMutation({
     mutationFn: () =>
       patch<{ expiryFilesChanged?: number }>(`/api/v1/folders/${q(folder.id)}`, {
         name: name.trim(),
-        destinationId: folder.type === "FORWARD" ? destination : undefined,
+        destinationIds: folder.type === "FORWARD" && destinationsChanged ? chosen : undefined,
+        sendExisting: folder.type === "FORWARD" && added.length > 0 && sendExisting ? true : undefined,
         keepDays: folder.type === "FORWARD" ? keepDays : undefined,
         defaultExpiry: shared && defaultExpiry.trim() !== (folder.defaultExpiry ?? "") ? defaultExpiry.trim() : undefined,
         maxExpiry: shared && maxExpiry.trim() !== (folder.maxExpiry ?? "") ? maxExpiry.trim() : undefined,
@@ -456,13 +434,12 @@ function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () =>
         </Field>
         {folder.type === "FORWARD" && (
           <div className={s.formRow}>
-            <Field label="Destination" htmlFor="settings-destination" hint="Pending files keep their original destination.">
-              <DestinationSelect
-                id="settings-destination"
-                value={destination}
-                onChange={setDestination}
-                options={dests.data ?? []}
-              />
+            <Field
+              label="Destinations"
+              htmlFor="settings-destination"
+              hint={`Up to ${max}. Added ones get new files; files already queued to a removed one still go to it.`}
+            >
+              <DestinationPicker id="settings-destination" value={chosen} onChange={setChosen} options={options} max={max} />
             </Field>
             <Field label="After sending" htmlFor="settings-keep">
               <select id="settings-keep" value={keepDays} onChange={(e) => setKeepDays(Number(e.target.value))}>
@@ -473,6 +450,12 @@ function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () =>
               </select>
             </Field>
           </div>
+        )}
+        {folder.type === "FORWARD" && added.length > 0 && (
+          <label className={s.checkbox}>
+            <input type="checkbox" checked={sendExisting} onChange={(e) => setSendExisting(e.target.checked)} /> Also send
+            the files still in this folder to {added.length === 1 ? "the added destination" : "the added destinations"}
+          </label>
         )}
         {shared && (
           <div className={s.formRow}>
@@ -519,7 +502,14 @@ function SettingsPanel({ folder, onSaved }: { folder: FolderView; onSaved: () =>
             {m.data?.expiryFilesChanged ? ` ${m.data.expiryFilesChanged} files now expire sooner.` : ""}
           </p>
         )}
-        <Button type="submit" variant="primary" disabled={m.isPending || !!defaultProblem || !!maxProblem || !!orderProblem}>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={
+            m.isPending || !!defaultProblem || !!maxProblem || !!orderProblem
+            || (folder.type === "FORWARD" && chosen.length === 0)
+          }
+        >
           Save settings
         </Button>
       </form>
@@ -691,6 +681,166 @@ function DeleteFolderDialog({
           Delete folder
         </Button>
       </DialogActions>
+    </Dialog>
+  );
+}
+
+function jobDetail(j: ForwardJob) {
+  if (j.state === "SENT") {
+    return `sent ${formatDate(j.sentAt)}`;
+  }
+  if (j.state === "CANCELLED") {
+    return j.cancelReason ? `stopped: ${j.cancelReason}` : "stopped";
+  }
+  const retryAt = j.state === "RETRY_WAIT" && j.nextAttemptAt ? ` Next try ${formatDate(j.nextAttemptAt)}.` : "";
+  return (j.lastError ?? "") + retryAt;
+}
+
+/** The folder's forward status: each file's overall state, and where it stands at every destination. */
+function ForwardStatus({
+  folderId,
+  jobs,
+  isOwner,
+  onChanged,
+}: {
+  folderId: string;
+  jobs: ForwardJob[];
+  isOwner: boolean;
+  onChanged: () => void;
+}) {
+  const [stopping, setStopping] = useState<ForwardJob>();
+  const retry = useMutation({
+    mutationFn: (jobId: string) => post(`/api/v1/folders/${q(folderId)}/forward-jobs/${q(jobId)}/retry`),
+    onSuccess: onChanged,
+  });
+  const files = groupJobs(jobs);
+  const perDestination = (g: FileJobs) => (
+    <ul className={s.destList}>
+      {g.jobs.map((j) => (
+        <li key={j.id}>
+          <span className={s.destName}>{j.destinationName}</span> <JobBadge state={j.state} />{" "}
+          <span className="muted">{jobDetail(j)}</span>
+          {isOwner && j.state === "FAILED" && (
+            <span className={s.destActions}>
+              <Button small onClick={() => retry.mutate(j.id)}>
+                Retry
+              </Button>
+              <Button small variant="ghost" onClick={() => setStopping(j)}>
+                Stop sending
+              </Button>
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <section className={s.section}>
+      <h2>Forward status</h2>
+      <ErrorNote>{retry.error?.message}</ErrorNote>
+      {files.length === 0 ? (
+        <Empty title="Nothing forwarded yet" />
+      ) : (
+        <div className={s.listWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th scope="col">File</th>
+                <th scope="col" className={s.num}>
+                  Size
+                </th>
+                <th scope="col">Status</th>
+                <th scope="col">Arrived</th>
+                <th scope="col">Destinations</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((g) => (
+                <tr key={g.key}>
+                  <td>{g.fileName}</td>
+                  <td className={s.num}>{formatBytes(g.size)}</td>
+                  <td>
+                    <FileForwardBadge states={g.jobs.map((j) => j.state)} />
+                  </td>
+                  <td>{formatDate(g.createdAt)}</td>
+                  <td>{perDestination(g)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ul className={s.cards}>
+            {files.map((g) => (
+              <li key={g.key} className={s.card}>
+                <div className={s.cardBody}>
+                  <div className={s.cardTitle}>{g.fileName}</div>
+                  <div className={s.cardMeta}>
+                    <FileForwardBadge states={g.jobs.map((j) => j.state)} />
+                    <span>{formatBytes(g.size)}</span>
+                  </div>
+                  {perDestination(g)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {stopping && (
+        <StopSendingDialog
+          folderId={folderId}
+          job={stopping}
+          onClose={() => setStopping(undefined)}
+          onDone={() => {
+            setStopping(undefined);
+            onChanged();
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+/** Gives up on one destination for one file, with a reason for the audit log. */
+export function StopSendingDialog({
+  folderId,
+  job,
+  onClose,
+  onDone,
+}: {
+  folderId: string;
+  job: { id: string; fileName: string; destinationName: string };
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const m = useMutation({
+    mutationFn: () =>
+      post(`/api/v1/folders/${q(folderId)}/forward-jobs/${q(job.id)}/cancel`, { reason: reason.trim() }),
+    onSuccess: onDone,
+  });
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={`Stop sending ${job.fileName} to ${job.destinationName}?`}
+      description="fdrop stops trying this destination for this file. Once the other destinations have it, the file is removed or kept as the folder's settings say."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          m.mutate();
+        }}
+      >
+        <Field label="Why" htmlFor="stop-reason" hint="Recorded in the audit log, e.g. the partner retired this server.">
+          <input id="stop-reason" type="text" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+        </Field>
+        <ErrorNote>{m.error?.message}</ErrorNote>
+        <DialogActions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="danger" disabled={!reason.trim() || m.isPending}>
+            Stop sending
+          </Button>
+        </DialogActions>
+      </form>
     </Dialog>
   );
 }

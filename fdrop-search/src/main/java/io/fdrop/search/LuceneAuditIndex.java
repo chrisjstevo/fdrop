@@ -67,7 +67,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * This node's audit index (see "The audit index" in SPEC.md): built from {@code audit_event} in {@code seq} order, in
+ * This node's audit index (see "The audit index" in spec/audit-log.md): built from {@code audit_event} in {@code seq} order, in
  * its own directory with its own key, never sharing anything with the file search index. It holds no event's full
  * data: results are {@code seq}s, read back from the DB.
  */

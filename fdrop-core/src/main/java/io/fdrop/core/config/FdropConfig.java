@@ -28,7 +28,7 @@ public class FdropConfig {
     public Limits limits = new Limits();
 
     public static class Http {
-        /** HTTPS only: there is no plain-HTTP listener (see "Security" in SPEC.md). */
+        /** HTTPS only: there is no plain-HTTP listener (see "Security" in spec/security-and-configuration.md). */
         public int port = 8443;
         public String bind = "0.0.0.0";
         public Tls tls = new Tls();
@@ -152,6 +152,8 @@ public class FdropConfig {
         public String encryptionKey = "";
         public int workers = 4;
         public int perDestinationConcurrency = 2;
+        /** A forward folder sends each file to between 1 and this many destinations. */
+        public int maxDestinationsPerFolder = 5;
         public String retryFor = "24h";
         public String connectTimeout = "30s";
     }
@@ -163,7 +165,7 @@ public class FdropConfig {
         public Encryption encryption = new Encryption();
     }
 
-    /** Encryption at rest (see SPEC.md). */
+    /** Encryption at rest (see spec/storage.md). */
     public static class Encryption {
         /** Encrypt new files. Encrypted files are always decrypted, whatever this says. */
         public boolean enabled = true;
@@ -228,7 +230,7 @@ public class FdropConfig {
         public DataSize clientHashMax = DataSize.ofGiB(2);
     }
 
-    /** The audit log kept in the DB and searchable by admins (see "Audit log" in SPEC.md). */
+    /** The audit log kept in the DB and searchable by admins (see "Audit log" in spec/audit-log.md). */
     public static class AuditLog {
         /** Events older than this are pruned from the DB; the log files follow logging config. */
         public String retention = "400d";
@@ -242,7 +244,7 @@ public class FdropConfig {
         public String verifyInterval = "24h";
     }
 
-    /** Full-text search (see "Search" in SPEC.md). Needs the fdrop-search module on the classpath. */
+    /** Full-text search (see "Search" in spec/search.md). Needs the fdrop-search module on the classpath. */
     public static class Search {
         public boolean enabled = true;
         /** Local disk on each node; encrypted with the storage KEK when encryption at rest is on. */
@@ -267,7 +269,7 @@ public class FdropConfig {
         public DataSize maxTextPerFile = DataSize.ofMiB(20);
     }
 
-    /** File expiry (see "File expiry" in SPEC.md). {@code max} and {@code home.*} use the expiry syntax. */
+    /** File expiry (see "File expiry" in spec/file-expiry.md). {@code max} and {@code home.*} use the expiry syntax. */
     public static class FileExpiry {
         /** False refuses new expiries and hides the UI controls; existing expiries still run. */
         public boolean enabled = true;
@@ -305,7 +307,7 @@ public class FdropConfig {
         public DbTls tls = new DbTls();
     }
 
-    /** TLS with a client certificate to PostgreSQL (see "Metadata DB connection" in SPEC.md); ignored for H2. */
+    /** TLS with a client certificate to PostgreSQL (see "Metadata DB connection" in spec/security-and-configuration.md); ignored for H2. */
     public static class DbTls {
         /** verify-full (check the server's certificate and host name) or disable (no TLS; logged as a warning). */
         public String mode = "verify-full";

@@ -5,7 +5,6 @@ import io.fdrop.core.audit.Audit;
 import io.fdrop.core.config.Durations;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Records.Folder;
-import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardClientKey;
 import io.fdrop.core.model.Records.ForwardDestination;
 import io.fdrop.core.model.Records.ForwardJob;
@@ -54,7 +53,8 @@ public final class ForwardWorker implements AutoCloseable {
     private final int perDestination;
     private final long retryFor;
     private final Map<String, AtomicInteger> runningPerDestination = new ConcurrentHashMap<>();
-    private final Set<String> runningFolders = ConcurrentHashMap.newKeySet();
+    /** Folder and destination pairs with a job running: each destination gets a folder's files in order. */
+    private final Set<String> runningLanes = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService poller = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().name("forward-poller").daemon().factory());
     private volatile boolean running = true;
@@ -86,7 +86,8 @@ public final class ForwardWorker implements AutoCloseable {
         }
         try {
             for (ForwardJob j : app.records.dueJobs(System.currentTimeMillis(), 200)) {
-                if (runningFolders.contains(j.folderId())) {
+                String lane = j.folderId() + "|" + j.destinationId();
+                if (runningLanes.contains(lane)) {
                     continue;
                 }
                 AtomicInteger perDest = runningPerDestination.computeIfAbsent(j.destinationId(),
@@ -99,13 +100,13 @@ public final class ForwardWorker implements AutoCloseable {
                     continue;
                 }
                 perDest.incrementAndGet();
-                runningFolders.add(j.folderId());
+                runningLanes.add(lane);
                 Thread.ofVirtual().name("forward-" + j.id()).start(() -> {
                     try {
                         process(j);
                     } finally {
                         perDest.decrementAndGet();
-                        runningFolders.remove(j.folderId());
+                        runningLanes.remove(lane);
                         workers.release();
                         wake();
                     }
@@ -146,12 +147,15 @@ public final class ForwardWorker implements AutoCloseable {
             KeyPair kp = MinaSshTools.loadPrivateKey(app.destinationService.secrets().open(key.get().privateKeyEnc()));
             send(j, d, kp, key.get().userCert());
             long now = System.currentTimeMillis();
-            app.records.updateJob(j.id(), JobState.SENT, null, 0, j.firstFailedAt(), now);
+            boolean finished = app.records.updateJob(j.id(), JobState.SENT, null, 0, j.firstFailedAt(), now);
             app.metrics.forwardSend(d.id(), true, System.nanoTime() - start);
             app.metrics.forwardBytes(d.id(), j.size());
             Audit.log("forward", "folder", folder.get().name(), "file", j.fileName(), "bytes", j.size(),
                     "destination", d.name(), "host", d.host(), "outcome", "sent");
-            afterSent(folder.get(), j, now);
+            if (finished) {
+                // every destination has the file now (or the owner gave up on the rest)
+                app.forwarding.finished(app.records.job(j.id()).orElse(j));
+            }
         } catch (ForwardClient.ForwardException e) {
             app.metrics.forwardSend(d.id(), false, System.nanoTime() - start);
             fail(j, e.getMessage(), reason(e.failure()), e.permanent());
@@ -262,19 +266,6 @@ public final class ForwardWorker implements AutoCloseable {
         long backoff = backoffOverride >= 0 ? backoffOverride
                 : Math.min(MAX_BACKOFF, MIN_BACKOFF << Math.min(10, Math.max(0, j.attempts())));
         app.records.updateJob(j.id(), JobState.RETRY_WAIT, msg, now + backoff, first, null);
-    }
-
-    /**
-     * Deletes the file from fdrop after sending, unless the folder keeps files for some days: then it expires that
-     * long after sending, and the expiry sweeper deletes it.
-     */
-    private void afterSent(Folder f, ForwardJob j, long sentAt) {
-        Optional<FolderForward> ff = app.folders.forward(f.id());
-        if (ff.isPresent() && ff.get().keepDays() > 0) {
-            app.expiry.setForwardKeep(j, ff.get().keepDays(), sentAt);
-            return;
-        }
-        app.janitor.deleteForwarded(f, j);
     }
 
     @Override

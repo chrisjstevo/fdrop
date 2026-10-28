@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@code /api/v1/admin/audit}: the audit log for admins (see "Audit log" in SPEC.md). Like every admin route, the
+ * {@code /api/v1/admin/audit}: the audit log for admins (see "Audit log" in spec/audit-log.md). Like every admin route, the
  * dispatcher requires a two-factor session; the service checks the admin role.
  */
 public final class AuditApi {

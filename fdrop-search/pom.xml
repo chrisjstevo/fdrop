@@ -35,7 +35,7 @@
       <groupId>org.apache.lucene</groupId>
       <artifactId>lucene-facet</artifactId>
     </dependency>
-    <!-- Tika: only the parsers for the formats search reads (see SPEC.md, Search) -->
+    <!-- Tika: only the parsers for the formats search reads (see spec/search.md, Search) -->
     <dependency>
       <groupId>org.apache.tika</groupId>
       <artifactId>tika-core</artifactId>

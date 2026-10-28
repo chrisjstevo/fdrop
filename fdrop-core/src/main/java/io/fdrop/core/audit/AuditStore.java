@@ -28,7 +28,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The audit log in the DB (see "Audit log" in SPEC.md). Every event logged through {@link Audit} is queued here and
+ * The audit log in the DB (see "Audit log" in spec/audit-log.md). Every event logged through {@link Audit} is queued here and
  * written in batches by a background thread, so no request waits for the DB. Each node chains its own rows:
  * {@code hash = SHA-256(prev_hash ‖ node ‖ node_seq ‖ id ‖ ts ‖ data)}, so a row edited, removed or reordered later
  * breaks the chain from that point. If the DB is unreachable, events wait in a bounded buffer; when it is full they are

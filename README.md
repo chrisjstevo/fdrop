@@ -9,7 +9,7 @@ members they choose, and drop files into **forward folders** that fdrop relays t
 systems use **application accounts**, which sign in with a client certificate, a password or an SSH key and join
 folders as members; the `fdrop` command line client uploads with one. Sign-in is through Keycloak.
 
-The full specification is in [SPEC.md](SPEC.md).
+The full specification starts at [SPEC.md](SPEC.md), which links to each part in [spec/](spec/).
 
 ## Layout
 
@@ -177,7 +177,8 @@ each time it starts.
 #### The dev stack, without an IDE
 
 The same containers an IDE starts from `.devcontainer/` (the workspace container with JDK 21 and Maven, Keycloak,
-Prometheus and the `sftp-target` SFTP server), with fdrop built and run inside the workspace container.
+Prometheus and the `sftp-target` and `sftp-target2` SFTP servers), with fdrop built and run inside the workspace
+container.
 [.devcontainer/compose.host-ports.yaml](.devcontainer/compose.host-ports.yaml) publishes their ports on the host,
 which an IDE would otherwise do. `-p fdrop-dev` keeps this stack apart from an IDE's.
 
@@ -234,12 +235,66 @@ password and then a code (`sftp -o PreferredAuthentications=keyboard-interactive
 
 ### Trying forward folders
 
-1. Sign in as admin, open **Admin: destinations**, create a destination for host `sftp-target`, port 22, user
-   `target`, directory `/inbox`, run **Test connection** and pin the host key.
-2. Copy the destination's public key into `.devcontainer/sftp-target/authorized_keys` and recreate `sftp-target`
-   (`podman-compose up -d --force-recreate sftp-target`): the image installs keys only when its container is
-   first created, so a plain restart is not enough.
-3. Assign the destination to a user; as that user, create a forward folder and drop a file into it.
+The dev container runs two throwaway SFTP servers, `sftp-target` and `sftp-target2`, so a forward folder can send
+each file to two separate servers. Both accept public-key login only, as user `target`, and keep files in `inbox`.
+Each has a fixed host key (made with the dev certificates), so a host key you pin keeps matching after the
+container is recreated, and each installs any key you add to its folder within 2 seconds, without a restart:
+
+| Server | Host and port, as fdrop sees it | Its key folder (git-ignored `authorized_keys`) | Host key fingerprint |
+| --- | --- | --- | --- |
+| `sftp-target` | `sftp-target`, 22 | `.devcontainer/sftp-target/` | `ssh-keygen -lf .devcontainer/certs/sftp-target_ssh_host_ed25519_key` |
+| `sftp-target2` | `sftp-target2`, 22 | `.devcontainer/sftp-target2/` | `ssh-keygen -lf .devcontainer/certs/sftp-target2_ssh_host_ed25519_key` |
+
+The dev config already allows both hosts (`forward.allowedHosts: [sftp-target, sftp-target2]`).
+
+**1. Create a destination for each server** (as admin).
+
+1. Sign in at https://localhost:8443 as **admin / admin** and choose **Destinations** in the menu.
+2. Choose **New destination** and fill in:
+   - **Name:** `Partner A` (what users see when they choose destinations)
+   - **Host:** `sftp-target`, **Port:** `22`
+   - **Username:** `target`
+   - **Remote directory:** `/inbox`
+   - **Server authentication:** Pinned host key
+3. Choose **Test connection**. It shows the fingerprint of the key the server presented; check it against the
+   table above, then choose **Pin this key** and **Create destination**. fdrop generates its own client key for
+   the destination, and the destination's page opens.
+4. Under **Client keys**, open the active key's **⋯** menu and choose **Copy public key**. Paste it into a new
+   file, `.devcontainer/sftp-target/authorized_keys`.
+5. Choose **Test connection** on the destination's page: within 2 seconds of saving the file it reports that
+   fdrop logged in. If it says the server rejected fdrop's key, check the file holds the one `ssh-ed25519 …` line.
+
+Then the same again for the second server: **Name** `Partner B`, **Host** `sftp-target2`, and its key pasted into
+`.devcontainer/sftp-target2/authorized_keys`.
+
+**2. Assign both destinations to a user.** On each destination's page, under **Assigned users**, enter a
+username and choose **Assign**. `admin` also holds the standard role, so you can run the whole demo as admin. To
+use `jugash` or `chris`, sign in as them once first, so fdrop knows the account.
+
+**3. Create a forward folder that sends to both** (as the assigned user).
+
+1. Choose **Manage folders**, then **New forward folder**.
+2. Give it a name such as `To both partners`, open **Destinations** and tick **Partner A** and **Partner B**,
+   choose what happens **After sending**, and choose **Create folder**.
+3. Drop a file onto the folder. Each destination gets its own copy.
+
+**4. Watch it arrive.** The folder's **Folder settings** page lists, under **Forward status**, each file with its
+state at every destination ("Sending · 1 of 2 sent" while part-way, then Sent). **My uploads** shows the same. On
+the servers themselves (from the host; with an IDE, find the container names with `podman ps --filter name=sftp-target`):
+
+```bash
+podman compose -p fdrop-dev -f .devcontainer/compose.yaml exec sftp-target ls -l /home/target/inbox
+```
+
+```bash
+podman compose -p fdrop-dev -f .devcontainer/compose.yaml exec sftp-target2 ls -l /home/target/inbox
+```
+
+**5. Optional: one destination failing.** Delete the key line from `.devcontainer/sftp-target2/authorized_keys`
+and drop another file. Partner A receives it; Partner B's send fails because the server rejects fdrop's key, and
+fdrop keeps the file. The folder's owner then sees **Retry** and **Stop sending** for Partner B. Paste the key back
+and choose **Retry** to deliver it, or **Stop sending** (with a reason, which is audited) to give up on Partner B
+for that file, which lets fdrop delete it.
 
 ### Trying file expiry
 
@@ -304,7 +359,7 @@ recorded as an `audit.viewed`, `audit.searched` or `audit.exported` event.
 
 ### Encryption at rest
 
-Every stored file is encrypted (see SPEC.md, Encryption at rest). The dev config has a fixed development key and
+Every stored file is encrypted (see [Encryption at rest](spec/storage.md#encryption-at-rest)). The dev config has a fixed development key and
 `allowPlaintextReads: true`, so files stored in `data/files` before encryption was added are still served. To
 encrypt them, open **Admin: Encryption**, press **Count objects now**, then **Encrypt** on the "Not encrypted"
 row. For anything real, make a key with `echo "k1:$(openssl rand -base64 32)"` and pass it as
@@ -403,7 +458,7 @@ e.g. `FDROP_STORAGE_S3_BUCKET` or `FDROP_AUTH_OIDC_WEBCLIENTSECRET`. See
   public API for it), so a stop exits 0 after in-flight uploads finish; on a JDK without it a stop simply ends the
   process, and unfinished uploads still resume at the next start. `--include` and `--ignore` also accept
   comma-separated lists, so the config file can set several. The watch integration tests leave resuming and
-  connection drops to the `upload` tests and the fake-uploader unit tests (see SPEC.md, Command line client, Tests).
+  connection drops to the `upload` tests and the fake-uploader unit tests (see [Tests](spec/clients.md#tests) under Command line client).
 - Client libraries: `FileEntry.isDirectory` (Java) and `IsDirectory` (.NET) now treat every type but `FILE` as a
   folder; they had looked for a `DIRECTORY` type that fdrop never sends (it sends `DIR`, `AREA`, `SHARED_FOLDER`
   and `FORWARD_FOLDER`).

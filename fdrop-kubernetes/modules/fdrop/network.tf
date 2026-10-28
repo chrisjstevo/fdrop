@@ -1,4 +1,4 @@
-# Default deny both ways, then only what fdrop needs (see "Kubernetes deployment" in SPEC.md).
+# Default deny both ways, then only what fdrop needs (see "Kubernetes deployment" in spec/kubernetes.md).
 resource "kubernetes_network_policy_v1" "default_deny" {
   metadata {
     name      = "default-deny"

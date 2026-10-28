@@ -82,7 +82,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * Search with an embedded Lucene index on this node (see "Search" in SPEC.md). The index is built from the change
+ * Search with an embedded Lucene index on this node (see "Search" in spec/search.md). The index is built from the change
  * feed in the metadata DB; the last change applied is kept in each Lucene commit, so a restart continues where the
  * last commit ended. Every query is filtered to the caller's areas, read from the DB per query, and every hit is
  * checked again as the caller before it is returned.

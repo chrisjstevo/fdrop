@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Full-text search over the names and contents of the files a user can open (see "Search" in SPEC.md). Implemented
+ * Full-text search over the names and contents of the files a user can open (see "Search" in spec/search.md). Implemented
  * by the fdrop-search module; without it, {@link NoSearch} answers that search is unavailable.
  */
 public interface SearchService extends AutoCloseable {

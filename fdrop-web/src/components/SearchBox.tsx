@@ -24,7 +24,7 @@ function useDebounced(value: string, ms: number) {
 
 /**
  * The top bar's search: a combobox. Typing narrows the folder being shown and suggests matching names from
- * everywhere; Enter searches names and contents everywhere the user can see (see "Search" in SPEC.md).
+ * everywhere; Enter searches names and contents everywhere the user can see (see "Search" in spec/search.md).
  */
 export function SearchBox() {
   const location = useLocation();

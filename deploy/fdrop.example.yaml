@@ -66,7 +66,7 @@ storage:
     trustedCas: null         # PEM bundle for an endpoint certificate from a private CA, added to the JDK's CAs
     pathStyle: false
     sse: AES256
-  encryption:                # encryption at rest, see SPEC.md
+  encryption:                # encryption at rest, see spec/storage.md
     enabled: true            # encrypt new files; encrypted files are always decrypted
     keyProvider: local       # local | aws-kms | vault
     local:
@@ -82,7 +82,7 @@ storage:
     allowPlaintextReads: false   # true only while migrating a store that holds unencrypted files
     reencrypt:
       bytesPerSecond: 50MiB  # per node
-search:                      # full-text search, see SPEC.md
+search:                      # full-text search, see spec/search.md
   enabled: true
   indexDir: /var/lib/fdrop/search   # local disk on each node; encrypted with the storage KEK when encryption is on
   includeForwardFolders: false
@@ -98,7 +98,7 @@ search:                      # full-text search, see SPEC.md
     timeout: 60s
     maxFileSize: 100MiB      # larger files are found by name only
     maxTextPerFile: 20MiB
-audit:                       # the audit log in the DB and the Admin: Audit log page, see SPEC.md
+audit:                       # the audit log in the DB and the Admin: Audit log page, see spec/audit-log.md
   retention: 400d            # older events are pruned nightly; the chain keeps verifying from the prune point
   bufferSize: 10000          # events waiting while the DB is unreachable; beyond that they are only in the log file
   node: null                 # this node's name in the audit chain; null = the host name (must be unique and stable)
@@ -126,7 +126,7 @@ expiry:
 db:
   url: jdbc:postgresql://db.example.com:5432/fdrop   # no ssl* parameters here: TLS is set under db.tls
   username: fdrop          # must equal the client certificate's CN (or be mapped to it in pg_ident.conf)
-  tls:                     # TLS with a client certificate, see SPEC.md "Metadata DB connection"
+  tls:                     # TLS with a client certificate, see spec/security-and-configuration.md "Metadata DB connection"
     mode: verify-full      # verify-full (default) | disable (no TLS: never in production)
     ca: /etc/fdrop/db/ca.crt          # PEM: the CA that signed the DB server's certificate
     cert: /etc/fdrop/db/client.crt    # PEM: fdrop's client certificate; renewals are picked up within 30 min

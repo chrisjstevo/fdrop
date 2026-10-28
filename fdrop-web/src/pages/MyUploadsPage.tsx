@@ -2,11 +2,12 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { downloadUrl, get, post, q } from "../api/client";
-import type { HistoryPage, HistoryRow } from "../api/types";
+import type { DestinationStatus, HistoryPage, HistoryRow } from "../api/types";
 import { Badge, Button, Dialog, DialogActions, Empty, ErrorNote, RowMenu } from "../components/ui";
 import { formatBytes, formatCount, formatDate, parentOf } from "../util/format";
 import { filesLink } from "./FilesPage";
-import { RecordBadge } from "./status";
+import { StopSendingDialog } from "./FoldersPage";
+import { JobBadge, RecordBadge, sentCount } from "./status";
 import s from "./pages.module.css";
 
 type Sort = "date_desc" | "date_asc" | "size_desc" | "size_asc" | "name_asc" | "name_desc";
@@ -37,6 +38,17 @@ function homeLabel(path: string) {
   return parent === "/home" ? "Home" : "Home / " + parent.replace(/^\/home\//, "").split("/").join(" / ");
 }
 
+/** The status badge; for a forward upload to several destinations, with "2 of 3 sent" while part-way. */
+function status(r: HistoryRow) {
+  const count = sentCount((r.destinations ?? []).map((d) => d.state));
+  return (
+    <span>
+      <RecordBadge status={r.status} />
+      {count && <span className="muted"> · {count}</span>}
+    </span>
+  );
+}
+
 function fromIp(r: HistoryRow) {
   return (
     <>
@@ -55,6 +67,7 @@ export function MyUploadsPage() {
   const [to, setTo] = useState("");
   const [sort, setSort] = useState<Sort>("date_desc");
   const [details, setDetails] = useState<HistoryRow>();
+  const [stopping, setStopping] = useState<{ row: HistoryRow; dest: DestinationStatus }>();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const params = new URLSearchParams();
@@ -82,7 +95,8 @@ export function MyUploadsPage() {
     refetchInterval: 10_000,
   });
   const retry = useMutation({
-    mutationFn: (r: HistoryRow) => post(`/api/v1/folders/${q(r.folderId!)}/forward-jobs/${q(r.jobId!)}/retry`),
+    mutationFn: ({ r, jobId }: { r: HistoryRow; jobId: string }) =>
+      post(`/api/v1/folders/${q(r.folderId!)}/forward-jobs/${q(jobId)}/retry`),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["uploads"] }),
   });
 
@@ -97,8 +111,15 @@ export function MyUploadsPage() {
     if (r.currentPath) {
       a.push({ label: "Open folder", onSelect: () => navigate(filesLink(parentOf(r.currentPath!))) });
     }
-    if (r.canRetry && r.jobId) {
-      a.push({ label: "Retry forward", onSelect: () => retry.mutate(r) });
+    if (r.canRetry && r.folderId) {
+      // the folder owner: Retry and Stop sending for each destination that failed
+      const failed = (r.destinations ?? []).filter((d) => d.state === "FAILED");
+      const several = (r.destinations ?? []).length > 1;
+      for (const d of failed) {
+        const to = several ? ` to ${d.destinationName}` : "";
+        a.push({ label: `Retry forward${to}`, onSelect: () => retry.mutate({ r, jobId: d.jobId }) });
+        a.push({ label: `Stop sending${to}…`, onSelect: () => setStopping({ row: r, dest: d }) });
+      }
     }
     a.push({ label: "Details", onSelect: () => setDetails(r) });
     return a;
@@ -198,7 +219,7 @@ export function MyUploadsPage() {
                   <td>{r.via === "HTTP" ? "Browser" : "SFTP"}</td>
                   <td>{fromIp(r)}</td>
                   <td>
-                    <RecordBadge status={r.status} />
+                    {status(r)}
                   </td>
                   <td className={s.num}>
                     <RowMenu label={`Actions for ${r.fileName}`} actions={actions(r)} />
@@ -221,7 +242,7 @@ export function MyUploadsPage() {
                     <span>{formatBytes(r.size)}</span>
                     {r.wentTo === "FORWARD" ? <Badge kind="forward">Forward</Badge> : <Badge kind="folder">Folder</Badge>}
                     <span>{formatDate(r.completedAt)}</span>
-                    <RecordBadge status={r.status} />
+                    {status(r)}
                   </div>
                 </button>
                 <RowMenu label={`Actions for ${r.fileName}`} actions={actions(r)} />
@@ -255,9 +276,23 @@ export function MyUploadsPage() {
             <dt>From IP</dt>
             <dd>{fromIp(details)}</dd>
             <dt>Status</dt>
-            <dd>
-              <RecordBadge status={details.status} />
-            </dd>
+            <dd>{status(details)}</dd>
+            {(details.destinations ?? []).length > 0 && (
+              <>
+                <dt>{details.destinations!.length > 1 ? "Destinations" : "Destination"}</dt>
+                <dd>
+                  <ul className={s.destList}>
+                    {details.destinations!.map((d) => (
+                      <li key={d.jobId}>
+                        <span className={s.destName}>{d.destinationName}</span> <JobBadge state={d.state} />
+                        {d.state === "SENT" && <span className="muted"> {formatDate(d.sentAt)}</span>}
+                        {d.error && d.state !== "SENT" && <span className="muted"> {d.error}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
             <dt>Uploaded to</dt>
             <dd>{details.pathAtUpload}</dd>
           </dl>
@@ -265,6 +300,17 @@ export function MyUploadsPage() {
             <Button onClick={() => setDetails(undefined)}>Close</Button>
           </DialogActions>
         </Dialog>
+      )}
+      {stopping && (
+        <StopSendingDialog
+          folderId={stopping.row.folderId!}
+          job={{ id: stopping.dest.jobId, fileName: stopping.row.fileName, destinationName: stopping.dest.destinationName }}
+          onClose={() => setStopping(undefined)}
+          onDone={() => {
+            setStopping(undefined);
+            void client.invalidateQueries({ queryKey: ["uploads"] });
+          }}
+        />
       )}
     </>
   );

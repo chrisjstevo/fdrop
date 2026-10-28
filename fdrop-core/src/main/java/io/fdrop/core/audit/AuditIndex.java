@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * This node's Lucene index of the audit log (see "The audit index" in SPEC.md), separate from the file search index.
+ * This node's Lucene index of the audit log (see "The audit index" in spec/audit-log.md), separate from the file search index.
  * Implemented by the fdrop-search module; without it, {@link NoAuditIndex} answers that audit search is unavailable
  * and the page still lists events from the DB. Callers check the admin role; the index does not.
  */

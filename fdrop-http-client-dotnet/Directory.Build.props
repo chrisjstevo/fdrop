@@ -1,5 +1,5 @@
 <Project>
-  <!-- Settings for every project here (see ".NET client library" in SPEC.md). -->
+  <!-- Settings for every project here (see ".NET client library" in spec/clients.md). -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>

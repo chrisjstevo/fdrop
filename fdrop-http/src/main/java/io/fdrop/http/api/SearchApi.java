@@ -11,7 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** {@code /api/v1/search}: names and contents of the files the caller can open (see "Search" in SPEC.md). */
+/** {@code /api/v1/search}: names and contents of the files the caller can open (see "Search" in spec/search.md). */
 public final class SearchApi {
 
     private final Fdrop app;

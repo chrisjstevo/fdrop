@@ -28,7 +28,7 @@ auth:
   session:
     secureCookie: true
 forward:
-  allowedHosts: [sftp-target]
+  allowedHosts: [sftp-target, sftp-target2]
   # fixed 32-byte development key; generate your own for anything real (openssl rand -base64 32)
   encryptionKey: ZmRyb3AtZGV2LWVuY3J5cHRpb24ta2V5LW5vdC1zZWM=
 storage:

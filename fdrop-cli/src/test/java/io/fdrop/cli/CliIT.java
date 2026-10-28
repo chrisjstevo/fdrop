@@ -164,7 +164,7 @@ class CliIT {
                 "Partner", null, "sftp.test.invalid", 22, "/in", "fdrop", ServerAuth.HOST_KEY,
                 "SHA256:" + "A".repeat(43), null, false, true));
         app.destinationService.assign(admin, d.destination().id(), "alice");
-        String forward = app.folderService.create(alice, FolderType.FORWARD, "Out", d.destination().id(), 0).id();
+        String forward = app.folderService.create(alice, FolderType.FORWARD, "Out", List.of(d.destination().id()), 0).id();
         app.folderService.putMember(alice, forward, "app-cli", Permission.WRITE);
         assertThat(cli(upload(url, f, "/forward/Out/"))).as(err).isZero();
         assertThat(out).contains("queued for forwarding");

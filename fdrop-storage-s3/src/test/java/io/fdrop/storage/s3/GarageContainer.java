@@ -19,7 +19,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Garage, the S3 store of the Kubernetes deployment (see "Object storage" in SPEC.md), as a single-node container at
+ * Garage, the S3 store of the Kubernetes deployment (see "Object storage" in spec/kubernetes.md), as a single-node container at
  * the version that deployment pins, set up through its admin API the way the deployment's setup Job does it: layout,
  * then an imported key, here also allowed to create buckets so each test gets its own.
  */

@@ -35,7 +35,7 @@ import java.util.stream.Stream;
 
 /**
  * Encryption at rest: wraps the configured backend so every byte written is encrypted with the object's own data key
- * and every byte read is decrypted and authenticated, as a stream (see "Encryption at rest" in SPEC.md and
+ * and every byte read is decrypted and authenticated, as a stream (see "Encryption at rest" in spec/storage.md and
  * {@link StreamFormat}). Callers see plaintext and plaintext sizes; the backend sees only ciphertext.
  *
  * <p>A resumable upload carries its header in its multipart id ({@code fdrop-enc1|…}), so any node can encrypt any

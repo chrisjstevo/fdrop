@@ -37,7 +37,7 @@ import java.util.stream.Stream;
 /**
  * File expiry: works out the expiry an upload gets from what was given with it, the folder's or home's default
  * and maximum, and the server's ceiling; stores it; lets people change it; and answers whether a file has expired.
- * Deletion is done by {@link ExpirySweeper}. See "File expiry" in SPEC.md.
+ * Deletion is done by {@link ExpirySweeper}. See "File expiry" in spec/file-expiry.md.
  */
 public final class ExpiryService {
 
@@ -628,6 +628,20 @@ public final class ExpiryService {
                 "expiresAt", Instant.ofEpochMilli(at), "expiresIn", keep.canonical(), "source", "FORWARD_KEEP");
         scheduler.accept(fe);
         search.append(SearchRepo.Op.INDEX, fe.storageKey(), null);
+    }
+
+    /**
+     * A kept forward file is being sent to another destination: its keep period no longer applies, and starts again
+     * when the last destination has it.
+     */
+    public void clearForwardKeep(String storageKey, String uploadRecordId) {
+        Optional<FileExpiry> fe = repo.find(storageKey);
+        if (fe.isPresent() && fe.get().source() == ExpirySource.FORWARD_KEEP) {
+            repo.delete(storageKey);
+            if (uploadRecordId != null) {
+                records.setExpiresAt(uploadRecordId, null);
+            }
+        }
     }
 
     // ---- SFTP control files ----

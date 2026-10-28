@@ -36,6 +36,7 @@ import io.fdrop.core.service.ExpiryService;
 import io.fdrop.core.service.ExpirySweeper;
 import io.fdrop.core.service.FileService;
 import io.fdrop.core.service.FolderService;
+import io.fdrop.core.service.ForwardService;
 import io.fdrop.core.service.HostPolicy;
 import io.fdrop.core.service.Janitor;
 import io.fdrop.core.service.PathResolver;
@@ -81,6 +82,7 @@ public final class Fdrop implements AutoCloseable {
     public final FileService files;
     public final UploadService uploadService;
     public final FolderService folderService;
+    public final ForwardService forwarding;
     public final DestinationService destinationService;
     public final UserAdminService userAdmin;
     public final AccountService accounts;
@@ -136,8 +138,10 @@ public final class Fdrop implements AutoCloseable {
         this.files = new FileService(config, storage, resolver, users, folders, destinations, uploads, records,
                 recorder, expiry, searchRepo);
         this.uploadService = new UploadService(config, storage, files, uploads, users, recorder, records, metrics);
+        this.forwarding = new ForwardService(config, folders, destinations, records, users, storage, resolver, expiry,
+                recorder, searchRepo);
         this.folderService = new FolderService(db, folders, destinations, users, records, storage, resolver, expiry,
-                searchRepo);
+                searchRepo, forwarding);
         this.hostPolicy = new HostPolicy(config.forward.allowedHosts);
         this.destinationService = new DestinationService(destinations, folders, users, records, ssh,
                 SecretBox.fromBase64(config.forward.encryptionKey), hostPolicy);

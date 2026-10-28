@@ -12,6 +12,8 @@ import java.util.Optional;
 /** Users and their SSH keys. */
 public final class UserRepo {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(UserRepo.class);
+
     private final Db db;
 
     public UserRepo(Db db) {
@@ -40,12 +42,21 @@ public final class UserRepo {
 
     /**
      * Creates the row on first sight and keeps username and email in step with Keycloak. The kind and quota are
-     * set only when the row is created.
+     * set only when the row is created. Usernames are unique in Keycloak, so another row still holding this
+     * username belongs to an account deleted there (or, in development, a realm imported again with new ids): it is
+     * renamed {@code <username>~<first 8 characters of its sub>}, so that lookups by username, such as adding a
+     * member or assigning a destination, find the account signing in now.
      */
     public User upsert(String sub, String username, String email, long defaultQuota, UserKind kind) {
         return db.inTransaction(() -> {
             Optional<User> existing = find(sub);
             long now = System.currentTimeMillis();
+            int renamed = db.update("UPDATE users SET username = username || '~' || SUBSTRING(sub, 1, 8)"
+                    + " WHERE username = ? AND sub <> ?", username, sub);
+            if (renamed > 0) {
+                log.warn("username {} now belongs to Keycloak user {}; the older fdrop account with that name was"
+                        + " renamed", username, sub);
+            }
             if (existing.isEmpty()) {
                 db.update("INSERT INTO users (sub, username, email, quota_bytes, used_bytes, created_at, last_login_at,"
                         + " kind) VALUES (?, ?, ?, ?, 0, ?, ?, ?)", sub, username, email, defaultQuota, now, now, kind);

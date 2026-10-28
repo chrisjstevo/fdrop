@@ -286,4 +286,72 @@ class HttpApiTest {
             app.config.http.tls.cert = cert;
         }
     }
+
+    private JsonNode send(String method, String path, String token, String body) throws Exception {
+        HttpResponse<String> r = http.send(req(path, token).method(method, body == null
+                ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(r.statusCode()).as(method + " " + path + ": " + r.body()).isLessThan(300);
+        return r.body().isEmpty() ? null : json(r);
+    }
+
+    @Test
+    void forwardFoldersWithSeveralDestinations() throws Exception {
+        String admin = "admin2fa:root";
+        String alice = "user:alice";
+        send("GET", "/api/v1/me", alice, null);
+        String[] ids = new String[3];
+        for (int i = 0; i < 3; i++) {
+            ids[i] = send("POST", "/api/v1/admin/forward-destinations", admin, "{\"name\":\"Partner " + i
+                    + "\",\"host\":\"sftp.test.invalid\",\"port\":22,\"remoteDir\":\"/in" + i
+                    + "\",\"username\":\"fdrop\",\"serverAuth\":\"HOST_KEY\",\"hostKeySha256\":\"SHA256:abc\"}")
+                    .get("destination").get("id").asText();
+            send("PUT", "/api/v1/admin/forward-destinations/" + ids[i] + "/assignments/alice", admin, null);
+        }
+        JsonNode me = send("GET", "/api/v1/me", alice, null);
+        assertThat(me.get("settings").get("maxDestinationsPerFolder").asInt()).isEqualTo(5);
+
+        JsonNode folder = send("POST", "/api/v1/folders", alice, "{\"type\":\"forward\",\"name\":\"Out\","
+                + "\"destinationIds\":[\"" + ids[0] + "\",\"" + ids[1] + "\"]}");
+        assertThat(folder.get("destinations")).hasSize(2);
+        assertThat(folder.get("destinationId").asText()).isEqualTo(ids[0]);
+        assertThat(folder.get("destinationName").asText()).isEqualTo("Partner 0, Partner 1");
+        String fid = folder.get("id").asText();
+
+        // a client written for one destination still works
+        JsonNode old = send("POST", "/api/v1/folders", alice, "{\"type\":\"forward\",\"name\":\"Old\","
+                + "\"destinationId\":\"" + ids[2] + "\"}");
+        assertThat(old.get("destinations")).hasSize(1);
+
+        HttpResponse<String> notArray = http.send(req("/api/v1/folders", alice).POST(HttpRequest.BodyPublishers
+                .ofString("{\"type\":\"forward\",\"name\":\"Bad\",\"destinationIds\":\"x\"}")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(notArray.statusCode()).isEqualTo(400);
+
+        send("PUT", "/api/v1/files/content?path=" + q("/forward/Out/a.txt"), alice, "a");
+        JsonNode jobs = send("GET", "/api/v1/folders/" + fid + "/forward-jobs", alice, null);
+        assertThat(jobs).hasSize(2);
+        assertThat(jobs.get(0).get("uploadRecordId").asText()).isEqualTo(jobs.get(1).get("uploadRecordId").asText());
+        assertThat(jobs.findValuesAsText("destinationName")).containsExactlyInAnyOrder("Partner 0", "Partner 1");
+
+        // the worker gives up on one destination; the owner stops sending there through the API
+        String failed = jobs.get(0).get("id").asText();
+        app.records.updateJob(failed, io.fdrop.core.model.Enums.JobState.FAILED, "rejected", 0, 1L, null);
+        JsonNode row = send("GET", "/api/v1/me/uploads?wentTo=forward", alice, null).get("rows").get(0);
+        assertThat(row.get("status").asText()).isEqualTo("FAILED");
+        assertThat(row.get("destinations")).hasSize(2);
+        assertThat(row.get("jobId").asText()).isEqualTo(failed);
+        assertThat(row.get("canRetry").asBoolean()).isTrue();
+        send("POST", "/api/v1/folders/" + fid + "/forward-jobs/" + failed + "/cancel", alice,
+                "{\"reason\":\"partner gone\"}");
+        JsonNode after = send("GET", "/api/v1/folders/" + fid + "/forward-jobs", alice, null);
+        assertThat(after.findValuesAsText("state")).contains("CANCELLED");
+        assertThat(after.findValuesAsText("cancelReason")).contains("partner gone");
+
+        // PATCH changes the destinations, here adding the third and sending it the file still in the folder
+        JsonNode patched = send("PATCH", "/api/v1/folders/" + fid, alice, "{\"destinationIds\":[\"" + ids[0]
+                + "\",\"" + ids[1] + "\",\"" + ids[2] + "\"],\"sendExisting\":true}");
+        assertThat(patched.get("destinations")).hasSize(3);
+        assertThat(send("GET", "/api/v1/folders/" + fid + "/forward-jobs", alice, null)).hasSize(3);
+    }
 }

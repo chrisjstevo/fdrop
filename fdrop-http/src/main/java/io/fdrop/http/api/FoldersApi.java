@@ -13,7 +13,9 @@ import io.fdrop.http.Response;
 import io.fdrop.http.Router;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -43,16 +45,26 @@ public final class FoldersApi {
         r.post("/api/v1/folders/{id}/owner", ctx -> Response.json(app.folderService.transferOwnership(
                 ctx.principal(), ctx.param("id"), FilesApi.text(ctx.jsonTree(), "username"))));
         r.get("/api/v1/folders/{id}/forward-jobs", ctx -> Response.json(app.folderService.jobs(ctx.principal(),
-                ctx.param("id"), 200).stream().map(FoldersApi::job).toList()));
+                ctx.param("id"), 500).stream().map(this::job).toList()));
         r.post("/api/v1/folders/{id}/forward-jobs/{jobId}/retry", ctx -> {
             app.folderService.retry(ctx.principal(), ctx.param("id"), ctx.param("jobId"));
             return Response.empty(204);
         });
+        r.post("/api/v1/folders/{id}/forward-jobs/{jobId}/cancel", ctx -> {
+            JsonNode b = ctx.jsonTree();
+            app.forwarding.cancel(ctx.principal(), ctx.param("id"), ctx.param("jobId"),
+                    b.hasNonNull("reason") ? b.get("reason").asText() : null);
+            return Response.empty(204);
+        });
     }
 
-    static Map<String, Object> job(ForwardJob j) {
+    /** One job: one file to one destination. Jobs of the same file share {@code uploadRecordId}. */
+    Map<String, Object> job(ForwardJob j) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", j.id());
+        m.put("uploadRecordId", j.uploadRecordId());
+        m.put("destinationId", j.destinationId());
+        m.put("destinationName", app.forwarding.destinationName(j.destinationId()));
         m.put("fileName", j.fileName());
         m.put("size", j.size());
         m.put("state", j.state().name());
@@ -61,6 +73,7 @@ public final class FoldersApi {
         m.put("createdAt", Instant.ofEpochMilli(j.createdAt()).toString());
         m.put("sentAt", j.sentAt() == null ? null : Instant.ofEpochMilli(j.sentAt()).toString());
         m.put("nextAttemptAt", j.nextAttemptAt() == 0 ? null : Instant.ofEpochMilli(j.nextAttemptAt()).toString());
+        m.put("cancelReason", j.cancelReason());
         return m;
     }
 
@@ -73,8 +86,7 @@ public final class FoldersApi {
             throw FdropException.badRequest("type must be 'shared' or 'forward'");
         }
         return Response.json(201, app.folderService.create(ctx.principal(), type, FilesApi.text(b, "name"),
-                b.hasNonNull("destinationId") ? b.get("destinationId").asText() : null,
-                b.hasNonNull("keepDays") ? b.get("keepDays").asInt() : null));
+                destinationIds(b), b.hasNonNull("keepDays") ? b.get("keepDays").asInt() : null));
     }
 
     private Response update(Ctx ctx) {
@@ -87,12 +99,28 @@ public final class FoldersApi {
                     b.path("applyToExisting").asBoolean(false));
         }
         FolderService.FolderView v = app.folderService.update(ctx.principal(), ctx.param("id"),
-                b.hasNonNull("name") ? b.get("name").asText() : null,
-                b.hasNonNull("destinationId") ? b.get("destinationId").asText() : null,
-                b.hasNonNull("keepDays") ? b.get("keepDays").asInt() : null);
+                b.hasNonNull("name") ? b.get("name").asText() : null, destinationIds(b),
+                b.path("sendExisting").asBoolean(false), b.hasNonNull("keepDays") ? b.get("keepDays").asInt() : null);
         Map<String, Object> out = Json.MAPPER.convertValue(v, LinkedHashMap.class);
         out.put("expiryFilesChanged", shortened);
         return Response.json(out);
+    }
+
+    /**
+     * A forward folder's destinations: {@code destinationIds} (an array), or the single {@code destinationId} older
+     * clients send. Null when neither is given.
+     */
+    private static List<String> destinationIds(JsonNode b) {
+        if (b.has("destinationIds") && !b.get("destinationIds").isNull()) {
+            JsonNode ids = b.get("destinationIds");
+            if (!ids.isArray()) {
+                throw FdropException.badRequest("destinationIds must be an array of destination ids");
+            }
+            List<String> out = new ArrayList<>();
+            ids.forEach(n -> out.add(n.isTextual() ? n.asText() : null));
+            return out;
+        }
+        return b.hasNonNull("destinationId") ? List.of(b.get("destinationId").asText()) : null;
     }
 
     /** An expiry setting in a PATCH: absent means unchanged, null or blank means cleared. */

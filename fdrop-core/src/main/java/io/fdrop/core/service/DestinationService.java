@@ -128,7 +128,7 @@ public final class DestinationService {
         repo.update(d);
         if (before.enabled() != d.enabled()) {
             for (Folder f : folders.usingDestination(id)) {
-                records.pauseFolder(f.id(), !d.enabled());
+                records.pauseDestination(f.id(), id, !d.enabled());
             }
         }
         Audit.log("destination.update", "user", admin.username(), "destination", id, "enabled", d.enabled());
@@ -142,6 +142,11 @@ public final class DestinationService {
         if (!using.isEmpty()) {
             throw FdropException.conflict("destination is used by " + using.size()
                     + " forward folder(s); disable it instead");
+        }
+        long open = records.countOpenJobs(id);
+        if (open > 0) {
+            throw FdropException.conflict(open + " file(s) are still waiting to be sent to this destination;"
+                    + " disable it instead");
         }
         repo.delete(id);
         Audit.log("destination.delete", "user", admin.username(), "destination", id);
@@ -249,7 +254,7 @@ public final class DestinationService {
         repo.assign(id, u.sub());
         for (Folder f : folders.usingDestination(id)) {
             if (f.ownerSub().equals(u.sub())) {
-                records.pauseFolder(f.id(), false);
+                records.pauseDestination(f.id(), id, false);
             }
         }
         Audit.log("destination.assign", "user", admin.username(), "destination", id, "assignee", username);
@@ -263,7 +268,7 @@ public final class DestinationService {
         }
         for (Folder f : folders.usingDestination(id)) {
             if (f.ownerSub().equals(u.sub())) {
-                records.pauseFolder(f.id(), true);
+                records.pauseDestination(f.id(), id, true);
             }
         }
         Audit.log("destination.unassign", "user", admin.username(), "destination", id, "assignee", username);

@@ -150,8 +150,9 @@ public class OidcClient {
                 }
             });
 
+            // the same key source as the other validators, so it also trusts auth.oidc.trustedCas
             IDTokenValidator idv = new IDTokenValidator(m.getIssuer(), new ClientID(cfg.webClientId),
-                    JWSAlgorithm.RS256, m.getJWKSetURI().toURL());
+                    new JWSVerificationKeySelector<>(JWSAlgorithm.RS256, jwks), null);
             idv.setMaxClockSkew(60);
 
             this.accessProcessor = ap;

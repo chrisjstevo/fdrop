@@ -1,7 +1,8 @@
 #!/bin/sh
 # Creates development certificates for fdrop: a CA, a server certificate for localhost (fdrop's HTTPS and mTLS
 # listeners), a client certificate for the app-demo application account, and for the dev container's PostgreSQL a
-# server certificate (postgres) and fdrop's client certificate (fdrop-db, CN=fdrop, the DB user). Run by the `certs`
+# server certificate (postgres) and fdrop's client certificate (fdrop-db, CN=fdrop, the DB user), and when ssh-keygen
+# is installed, fixed SSH host keys for the two dev SFTP destinations. Run by the `certs`
 # service of .devcontainer/compose.yaml and deploy/compose/compose.yaml. The CA is kept while it is valid, and each
 # certificate is kept until a week before it expires, so adding a certificate here never replaces the others.
 #
@@ -55,8 +56,23 @@ issue fdrop-db "/CN=fdrop/O=fdrop development" "DNS:fdrop.db-client.local" clien
 rm -f ca.srl
 chmod 644 ./*.crt ./*.key
 
+# hostkey <name>: a fixed Ed25519 host key for a dev SFTP destination (sftp-target, sftp-target2), so a host key pinned
+# in fdrop's admin screens still matches after the container is recreated to install fdrop's client key. No .key
+# suffix: sshd refuses a host key others can read, so these stay owner-only.
+hostkey() {
+  if [ -f "$1_ssh_host_ed25519_key" ] || ! command -v ssh-keygen >/dev/null 2>&1; then
+    return
+  fi
+  ssh-keygen -q -t ed25519 -N "" -C "$1 (fdrop development)" -f "$1_ssh_host_ed25519_key"
+  chmod 600 "$1_ssh_host_ed25519_key"
+  made="$made $1-hostkey"
+}
+hostkey sftp-target
+hostkey sftp-target2
+
 if [ -z "$made" ]; then
   echo "dev certificates in $dir are current"
 else
-  echo "created in $dir:$made (ca.crt; server: localhost HTTPS; app-demo; postgres: DB server; fdrop-db: DB client)"
+  echo "created in $dir:$made (ca.crt; server: localhost HTTPS; app-demo; postgres: DB server; fdrop-db: DB client;"
+  echo "  sftp-target and sftp-target2 host keys)"
 fi

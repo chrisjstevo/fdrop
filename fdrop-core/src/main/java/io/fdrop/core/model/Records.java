@@ -60,7 +60,8 @@ public final class Records {
     public record FolderMember(String folderId, String userSub, Permission permission) {
     }
 
-    public record FolderForward(String folderId, String destinationId, int keepDays) {
+    /** A forward folder's settings; its destinations are in {@code folder_destination}. */
+    public record FolderForward(String folderId, int keepDays) {
     }
 
     public record ForwardDestination(String id, String name, String description, String host, int port,
@@ -102,6 +103,11 @@ public final class Records {
     public record ForwardJob(String id, String folderId, String destinationId, String uploadRecordId,
                              String storageKey, String fileName, long size, JobState state, int attempts,
                              String lastError, long nextAttemptAt, Long firstFailedAt, long createdAt,
-                             long updatedAt, Long sentAt) {
+                             long updatedAt, Long sentAt, String cancelledBy, String cancelReason) {
+
+        /** Sent, or given up on by the owner: nothing more will happen to this job. */
+        public boolean finished() {
+            return state == JobState.SENT || state == JobState.CANCELLED;
+        }
     }
 }

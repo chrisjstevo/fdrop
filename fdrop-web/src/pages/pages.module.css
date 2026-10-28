@@ -399,3 +399,22 @@
 .highlighted {
   background: var(--color-selected) !important;
 }
+
+/* A forward file's destinations, one per line with its state */
+.destList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.destName {
+  font-weight: 600;
+}
+
+.destActions {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+}

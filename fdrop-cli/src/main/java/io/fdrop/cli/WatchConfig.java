@@ -10,7 +10,7 @@ import java.time.Duration;
 import java.util.List;
 
 /**
- * A checked {@code fdrop watch} configuration (see "Watching a directory" in SPEC.md): the one local folder to
+ * A checked {@code fdrop watch} configuration (see "Watching a directory" in spec/clients.md): the one local folder to
  * listen to, the one server folder to upload into, and what to do with files.
  */
 record WatchConfig(Path localDir, String remoteDir, boolean recursive, List<String> include, List<String> ignore,

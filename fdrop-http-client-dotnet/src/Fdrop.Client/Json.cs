@@ -34,7 +34,11 @@ internal sealed record ExpiresAtBody(string ExpiresAt);
 /// <summary>Sends <c>"expiresIn": null</c>, which clears the expiry; the property must not be left out.</summary>
 internal sealed record ClearExpiryBody([property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ExpiresIn);
 
-internal sealed record CreateFolderBody(string Type, string Name, string? DestinationId, int? KeepDays);
+internal sealed record CreateFolderBody(string Type, string Name, IReadOnlyList<string>? DestinationIds, int? KeepDays);
+
+internal sealed record DestinationsBody(IReadOnlyList<string> DestinationIds, bool SendExisting);
+
+internal sealed record CancelJobBody(string Reason);
 
 internal sealed record MemberBody(string Permission);
 
@@ -62,5 +66,7 @@ internal sealed record Problem(string? Type, string? Title, string? Detail);
 [JsonSerializable(typeof(ExpiresAtBody))]
 [JsonSerializable(typeof(ClearExpiryBody))]
 [JsonSerializable(typeof(CreateFolderBody))]
+[JsonSerializable(typeof(DestinationsBody))]
+[JsonSerializable(typeof(CancelJobBody))]
 [JsonSerializable(typeof(MemberBody))]
 internal sealed partial class FdropJson : JsonSerializerContext;

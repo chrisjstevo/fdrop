@@ -1,7 +1,7 @@
 # fdrop on Kubernetes
 
 A reference deployment of fdrop with everything it needs, written in the Terraform language and applied with
-[OpenTofu](https://opentofu.org/) (see "Kubernetes deployment" in `SPEC.md`):
+[OpenTofu](https://opentofu.org/) (see [Kubernetes deployment](../spec/kubernetes.md)):
 
 | Module | What it runs |
 | --- | --- |
@@ -32,7 +32,7 @@ through the state.
   Keycloak's admin console (Clients, fdrop-web or fdrop-sftp, Credentials) or with `kcadm.sh`; fdrop's pods have
   already rolled onto it.
 - **The storage KEK:** add a new key first (fdrop reads a list, the first is primary), re-encrypt with Admin:
-  Encryption, then drop the old one; see "Encryption at rest" in `SPEC.md`. Replacing it outright makes stored files
+  Encryption, then drop the old one; see [Encryption at rest](../spec/storage.md#encryption-at-rest). Replacing it outright makes stored files
   unreadable.
 - **The SFTP host key:** replacing it changes the fingerprint every SFTP client has stored; announce it first.
 

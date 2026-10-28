@@ -1,4 +1,4 @@
-# PostgreSQL for fdrop and for Keycloak, as two CloudNativePG clusters (see "Kubernetes deployment" in SPEC.md).
+# PostgreSQL for fdrop and for Keycloak, as two CloudNativePG clusters (see "Kubernetes deployment" in spec/kubernetes.md).
 # fdrop's database admits fdrop only over TLS with a client certificate (Metadata DB connection); every certificate
 # is cert-manager's, from a CA it keeps in its own namespace, so no key passes through OpenTofu's state.
 

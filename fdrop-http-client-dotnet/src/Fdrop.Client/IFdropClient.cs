@@ -78,8 +78,15 @@ public interface IFdropClient : IDisposable
     /// <summary>Creates a shared folder owned by the caller.</summary>
     Task<Folder> CreateSharedFolderAsync(string name, CancellationToken ct = default);
 
-    /// <summary>Creates a forward folder sending files to one of <see cref="GetForwardDestinationsAsync"/>.</summary>
-    Task<Folder> CreateForwardFolderAsync(string name, string destinationId, int? keepDays = null, CancellationToken ct = default);
+    /// <summary>Creates a forward folder sending each file to every one of <paramref name="destinationIds"/>, chosen from <see cref="GetForwardDestinationsAsync"/>.</summary>
+    Task<Folder> CreateForwardFolderAsync(string name, IReadOnlyList<string> destinationIds, int? keepDays = null, CancellationToken ct = default);
+
+    /// <summary>Creates a forward folder sending files to one destination.</summary>
+    Task<Folder> CreateForwardFolderAsync(string name, string destinationId, int? keepDays = null, CancellationToken ct = default)
+        => CreateForwardFolderAsync(name, [destinationId], keepDays, ct);
+
+    /// <summary>Changes a forward folder's destinations (owner). Added ones get new files, and with <paramref name="sendExisting"/> also the files still in the folder.</summary>
+    Task<Folder> SetForwardDestinationsAsync(string folderId, IReadOnlyList<string> destinationIds, bool sendExisting = false, CancellationToken ct = default);
 
     /// <summary>Deletes a folder (owner).</summary>
     Task DeleteFolderAsync(string id, CancellationToken ct = default);
@@ -95,6 +102,9 @@ public interface IFdropClient : IDisposable
 
     /// <summary>Retries a failed forward job (owner).</summary>
     Task RetryForwardJobAsync(string folderId, string jobId, CancellationToken ct = default);
+
+    /// <summary>Stops sending one file to one destination whose job failed (owner); the reason is audited.</summary>
+    Task CancelForwardJobAsync(string folderId, string jobId, string reason, CancellationToken ct = default);
 
     /// <summary>The destinations the caller may use for forward folders.</summary>
     Task<IReadOnlyList<ForwardDestination>> GetForwardDestinationsAsync(CancellationToken ct = default);

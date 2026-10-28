@@ -9,7 +9,7 @@ import java.util.Map;
 
 /**
  * A file expiry as people type it: one whole number and one unit ({@code 1sec}, {@code 6 days}, {@code 2weeks},
- * {@code 1year}), or {@code never}. See "Expiry syntax" in SPEC.md for the grammar. Seconds to weeks are fixed
+ * {@code 1year}), or {@code never}. See "Expiry syntax" in spec/file-expiry.md for the grammar. Seconds to weeks are fixed
  * lengths; months and years are calendar units added in UTC, clamped to the end of a shorter month.
  *
  * <p>{@code fdrop-web} and {@code fdrop-cli} have their own copies of this parser; all three must pass

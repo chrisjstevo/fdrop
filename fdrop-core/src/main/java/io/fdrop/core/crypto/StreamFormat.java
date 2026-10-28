@@ -12,7 +12,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 
 /**
- * The {@code fdrop-stream-v1} object format (see "Encryption at rest" in SPEC.md): a fixed 1024-byte header, then the
+ * The {@code fdrop-stream-v1} object format (see "Encryption at rest" in spec/storage.md): a fixed 1024-byte header, then the
  * file in 64 KiB plaintext segments, each stored as {@code nonce(12) ‖ AES-256-GCM ciphertext ‖ tag(16)} with the
  * segment index and a final flag as additional data. Fixed sizes make a stored object's plaintext size a function of
  * its stored size alone, so listings never read headers.

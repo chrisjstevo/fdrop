@@ -69,6 +69,9 @@ public enum Permission
 /// <summary>A shared or forward folder as the caller sees it.</summary>
 /// <param name="Type"><c>SHARED</c> or <c>FORWARD</c>.</param>
 /// <param name="Role">The caller's own role: <c>OWNER</c>, <c>WRITE</c> or <c>READ</c>.</param>
+/// <param name="DestinationId">A forward folder's first destination, as servers that allowed one sent it.</param>
+/// <param name="DestinationName">Every destination's name, comma-separated.</param>
+/// <param name="Destinations">A forward folder's destinations; each file is sent to every one.</param>
 public sealed record Folder(
     string Id,
     string Type,
@@ -83,13 +86,18 @@ public sealed record Folder(
     IReadOnlyList<FolderMember> Members,
     [property: JsonConverter(typeof(EpochMillisConverter))] DateTimeOffset CreatedAt,
     string? DefaultExpiry,
-    string? MaxExpiry);
+    string? MaxExpiry,
+    IReadOnlyList<FolderDestination>? Destinations = null);
+
+/// <summary>One of a forward folder's destinations; <c>Paused</c> when disabled or no longer assigned to the owner.</summary>
+public sealed record FolderDestination(string Id, string Name, bool Paused);
 
 /// <summary>A folder member; <c>Kind</c> is <c>STANDARD</c> or <c>APPLICATION</c>.</summary>
 public sealed record FolderMember(string Username, Permission Permission, string Kind);
 
-/// <summary>One file being sent on from a forward folder.</summary>
-/// <param name="State">QUEUED, SENDING, RETRY_WAIT, SENT, FAILED or PAUSED.</param>
+/// <summary>One file being sent on from a forward folder to one destination; a file's jobs share <c>UploadRecordId</c>.</summary>
+/// <param name="State">QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED or CANCELLED.</param>
+/// <param name="CancelReason">Why the owner stopped sending the file to this destination.</param>
 public sealed record ForwardJob(
     string Id,
     string FileName,
@@ -99,12 +107,16 @@ public sealed record ForwardJob(
     string? LastError,
     DateTimeOffset? CreatedAt,
     DateTimeOffset? SentAt,
-    DateTimeOffset? NextAttemptAt);
+    DateTimeOffset? NextAttemptAt,
+    string? UploadRecordId = null,
+    string? DestinationId = null,
+    string? DestinationName = null,
+    string? CancelReason = null);
 
 /// <summary>A destination the caller may choose for a forward folder.</summary>
 public sealed record ForwardDestination(string Id, string Name, string? Description);
 
-/// <summary>One row of the caller's upload history.</summary>
+/// <summary>One row of the caller's upload history; a forward upload lists where it stands at each destination.</summary>
 public sealed record UploadRecord(
     string Id,
     string FileName,
@@ -120,7 +132,17 @@ public sealed record UploadRecord(
     string Via,
     string? ClientIp,
     string Status,
-    string? JobId);
+    string? JobId,
+    IReadOnlyList<UploadDestination>? Destinations = null);
+
+/// <summary>Where a forward upload stands at one destination; <c>State</c> is a <see cref="ForwardJob"/> state.</summary>
+public sealed record UploadDestination(
+    string JobId,
+    string DestinationId,
+    string DestinationName,
+    string State,
+    string? Error,
+    DateTimeOffset? SentAt);
 
 /// <summary>A page of upload history; pass <c>NextCursor</c> back for the next page (null on the last).</summary>
 public sealed record UploadHistory(long TotalCount, long TotalBytes, string? NextCursor, IReadOnlyList<UploadRecord> Rows);

@@ -14,12 +14,9 @@ import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.UploadState;
 import io.fdrop.core.model.Enums.UserKind;
-import io.fdrop.core.model.Records.Folder;
 import io.fdrop.core.model.Records.ForwardDestination;
-import io.fdrop.core.model.Records.ForwardJob;
 import io.fdrop.core.model.Records.UploadSession;
 import io.fdrop.core.storage.StorageBackend;
-import io.fdrop.core.storage.StoragePath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +24,6 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -121,21 +117,6 @@ public final class Janitor implements AutoCloseable {
         }
     }
 
-    /** Removes a forwarded file from fdrop and gives the quota back. */
-    public void deleteForwarded(Folder f, ForwardJob j) {
-        try {
-            StoragePath key = StoragePath.of(j.storageKey());
-            Optional<io.fdrop.core.storage.ObjectInfo> o = storage.stat(key);
-            if (o.isPresent()) {
-                storage.delete(key);
-                users.addUsage(f.ownerSub(), -o.get().size());
-                search.append(SearchRepo.Op.DELETE, key.toString(), null);
-            }
-        } catch (Exception e) {
-            log.warn("could not delete forwarded file {}: {}", j.storageKey(), e.toString());
-        }
-    }
-
     public void refreshGauges() {
         Map<String, Long> foldersByType = new HashMap<>();
         for (FolderType t : FolderType.values()) {
@@ -148,7 +129,7 @@ public final class Janitor implements AutoCloseable {
         Map<List<String>, Long> jobs = new HashMap<>();
         for (ForwardDestination d : destinations.all()) {
             for (JobState s : JobState.values()) {
-                if (s == JobState.SENT) {
+                if (s == JobState.SENT || s == JobState.CANCELLED) {
                     continue;
                 }
                 jobs.put(List.of(s.name(), d.id()), records.countJobs(s, d.id()));

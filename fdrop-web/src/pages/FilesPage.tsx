@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { del, downloadUrl, get, post, q } from "../api/client";
-import type { Entry, FolderView, ForwardJob, HistoryPage, Listing } from "../api/types";
+import type { Entry, FolderView, ForwardJob, HistoryPage, JobState, Listing } from "../api/types";
 import { DropTarget } from "../components/DropZone";
 import { ExpiresCell, ExpiryPicker, SetExpiryDialog, type ExpiryChoice } from "../components/Expiry";
 import { useProvideFolderActions } from "../components/FolderActions";
@@ -20,7 +20,7 @@ import {
   RowMenu,
 } from "../components/ui";
 import { formatBytes, formatDate, join, parentOf } from "../util/format";
-import { JobBadge } from "./status";
+import { FileForwardBadge, groupJobs } from "./status";
 import s from "./pages.module.css";
 
 const TITLES: Record<string, string> = { "/home": "Home", "/shared": "Shared folders", "/forward": "Forward folders" };
@@ -155,10 +155,11 @@ export function FilesPage() {
   const entries = search ? allEntries.filter((e) => e.name.toLowerCase().includes(search)) : allEntries;
   const folderExpiry = listing.data?.folderExpiry;
   const expiryAllowed = !!folderExpiry?.allowed;
-  const latestJob = new Map<string, ForwardJob>();
-  for (const j of jobs.data ?? []) {
-    if (!latestJob.has(j.fileName)) {
-      latestJob.set(j.fileName, j);
+  // each file's latest upload, with one job per destination (jobs come newest first)
+  const fileStates = new Map<string, JobState[]>();
+  for (const g of groupJobs(jobs.data ?? [])) {
+    if (!fileStates.has(g.fileName)) {
+      fileStates.set(g.fileName, g.jobs.map((j) => j.state));
     }
   }
 
@@ -245,7 +246,7 @@ export function FilesPage() {
                     <ExpiresCell entry={e} />
                   </td>
                 )}
-                {inForward && <td>{latestJob.get(e.name) ? <JobBadge state={latestJob.get(e.name)!.state} /> : ""}</td>}
+                {inForward && <td>{fileStates.get(e.name) ? <FileForwardBadge states={fileStates.get(e.name)!} /> : ""}</td>}
                 <td className={s.num}>
                   {actionsFor(e).length > 0 && <RowMenu label={`Actions for ${e.name}`} actions={actionsFor(e)} />}
                 </td>
@@ -263,7 +264,7 @@ export function FilesPage() {
                   {e.type === "FILE" && <span>{formatBytes(e.size)}</span>}
                   {e.modified && <span>{formatDate(e.modified)}</span>}
                   <ExpiresCell entry={e} />
-                  {inForward && latestJob.get(e.name) && <JobBadge state={latestJob.get(e.name)!.state} />}
+                  {inForward && fileStates.get(e.name) && <FileForwardBadge states={fileStates.get(e.name)!} />}
                 </div>
               </div>
               {actionsFor(e).length > 0 && <RowMenu label={`Actions for ${e.name}`} actions={actionsFor(e)} />}
@@ -297,9 +298,9 @@ export function FilesPage() {
       </div>
       {folder.data?.type === "FORWARD" && (
         <p className="muted">
-          Files dropped here are sent to <strong>{folder.data.destinationName ?? "its destination"}</strong>
+          Files dropped here are sent to <strong>{folder.data.destinationName ?? "its destinations"}</strong>
           {folder.data.keepDays ? `, then kept for ${folder.data.keepDays} days.` : " and then removed from fdrop."}
-          {folder.data.paused && " Forwarding is paused: the destination is disabled or no longer assigned."}
+          {folder.data.paused && " Forwarding is paused: a destination is disabled or no longer assigned."}
         </p>
       )}
       {folder.data && folder.data.role === "READ" && <p className="muted">You have read-only access to this folder.</p>}
@@ -320,7 +321,7 @@ export function FilesPage() {
           disabled={!writable || (inForward && folder.data?.paused) || (expiryAllowed && !!expiry.error)}
           disabledReason={
             inForward && folder.data?.paused
-              ? "Uploads are paused because this folder's destination is disabled or no longer assigned."
+              ? "Uploads are paused because one of this folder's destinations is disabled or no longer assigned."
               : expiryAllowed && expiry.error
                 ? "Fix the expiry above to upload."
                 : undefined

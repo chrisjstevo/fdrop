@@ -187,7 +187,7 @@ class SftpServerTest {
                 "Partner", null, "127.0.0.1", 2200, "/in", "fdrop", ServerAuth.HOST_KEY, "SHA256:pinned", null,
                 false, true));
         app.destinationService.assign(admin, d.destination().id(), "alice");
-        app.folderService.create(alice, FolderType.FORWARD, "Out", d.destination().id(), 0);
+        app.folderService.create(alice, FolderType.FORWARD, "Out", List.of(d.destination().id()), 0);
         try (SftpClient sftp = login("alice", "alice")) {
             put(sftp, "/forward/Out/a.txt", "a".getBytes(StandardCharsets.UTF_8));
             assertThatThrownBy(() -> sftp.mkdir("/forward/Out/sub")).isInstanceOf(SftpException.class);

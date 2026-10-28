@@ -16,7 +16,6 @@ import io.fdrop.core.model.Enums.UserKind;
 import io.fdrop.core.model.Records.Folder;
 import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.FolderMember;
-import io.fdrop.core.model.Records.ForwardDestination;
 import io.fdrop.core.model.Records.ForwardJob;
 import io.fdrop.core.model.Records.User;
 import io.fdrop.core.storage.StorageBackend;
@@ -36,9 +35,13 @@ public final class FolderService {
     public record MemberView(String username, Permission permission, UserKind kind) {
     }
 
-    /** A folder as one user sees it. */
+    /**
+     * A folder as one user sees it. A forward folder lists its {@code destinations}; {@code destinationId} (the
+     * first) and {@code destinationName} (all names, comma-separated) are kept for clients written for one.
+     */
     public record FolderView(String id, FolderType type, String name, String path, String owner, String role,
-                             String destinationId, String destinationName, Integer keepDays, boolean paused,
+                             String destinationId, String destinationName,
+                             List<ForwardService.DestinationRef> destinations, Integer keepDays, boolean paused,
                              List<MemberView> members, long createdAt, String defaultExpiry, String maxExpiry) {
     }
 
@@ -51,10 +54,13 @@ public final class FolderService {
     private final PathResolver resolver;
     private final ExpiryService expiry;
     private final SearchRepo search;
+    private final ForwardService forwarding;
 
     public FolderService(Db db, FolderRepo folders, DestinationRepo destinations, UserRepo users, RecordRepo records,
-                         StorageBackend storage, PathResolver resolver, ExpiryService expiry, SearchRepo search) {
+                         StorageBackend storage, PathResolver resolver, ExpiryService expiry, SearchRepo search,
+                         ForwardService forwarding) {
         this.search = search;
+        this.forwarding = forwarding;
         this.db = db;
         this.folders = folders;
         this.destinations = destinations;
@@ -85,17 +91,17 @@ public final class FolderService {
         String ownerName = users.find(f.ownerSub()).map(User::username).orElse("(deleted user)");
         String destId = null;
         String destName = null;
+        List<ForwardService.DestinationRef> dests = null;
         Integer keep = null;
         boolean paused = false;
         if (f.type() == FolderType.FORWARD) {
-            Optional<FolderForward> ff = folders.forward(f.id());
-            if (ff.isPresent()) {
-                destId = ff.get().destinationId();
-                keep = ff.get().keepDays();
-                Optional<ForwardDestination> d = destinations.find(destId);
-                destName = d.map(ForwardDestination::name).orElse(null);
-                paused = d.isEmpty() || !d.get().enabled() || !destinations.isAssigned(destId, f.ownerSub());
+            keep = folders.forward(f.id()).map(FolderForward::keepDays).orElse(0);
+            dests = forwarding.destinationsOf(f);
+            if (!dests.isEmpty()) {
+                destId = dests.get(0).id();
+                destName = String.join(", ", dests.stream().map(ForwardService.DestinationRef::name).toList());
             }
+            paused = dests.isEmpty() || dests.stream().anyMatch(ForwardService.DestinationRef::paused);
         }
         List<MemberView> members = new ArrayList<>();
         if (owner) {
@@ -107,25 +113,28 @@ public final class FolderService {
         }
         String path = (f.type() == FolderType.SHARED ? "/shared/" : "/forward/") + f.name();
         var exp = expiry.folderSettings(f);
-        return new FolderView(f.id(), f.type(), f.name(), path, ownerName, role, destId, destName, keep, paused,
-                members, f.createdAt(), exp.defaultExpiry(), exp.maxExpiry());
+        return new FolderView(f.id(), f.type(), f.name(), path, ownerName, role, destId, destName, dests, keep,
+                paused, members, f.createdAt(), exp.defaultExpiry(), exp.maxExpiry());
     }
 
-    public FolderView create(Principal p, FolderType type, String rawName, String destinationId, Integer keepDays) {
+    /** Creates a shared folder, or a forward folder sending to {@code destinationIds} (one or more). */
+    public FolderView create(Principal p, FolderType type, String rawName, List<String> destinationIds,
+                             Integer keepDays) {
         requireUser(p);
         if (!p.isPerson()) {
             throw FdropException.forbidden("application accounts are members only and cannot create folders");
         }
         String name = Names.folderName(rawName);
         Folder f = new Folder(Hashing.newId("fld"), type, name, p.sub(), System.currentTimeMillis());
-        if (type == FolderType.FORWARD) {
-            requireAssignedDestination(p.sub(), destinationId);
-        }
+        List<String> dests = type == FolderType.FORWARD ? forwarding.validate(p.sub(), destinationIds, List.of())
+                : List.of();
+        int keep = keepDays(keepDays);
         try {
             db.inTransaction(() -> {
                 folders.insert(f);
                 if (type == FolderType.FORWARD) {
-                    folders.putForward(new FolderForward(f.id(), destinationId, keepDays(keepDays)));
+                    folders.putForward(new FolderForward(f.id(), keep));
+                    folders.setDestinations(f.id(), dests, p.sub());
                 }
                 return null;
             });
@@ -140,7 +149,7 @@ public final class FolderService {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        Audit.log("folder.create", "user", p.username(), "type", type, "folder", name);
+        Audit.log("folder.create", "user", p.username(), "type", type, "folder", name, "destinations", dests);
         return view(p, f);
     }
 
@@ -152,23 +161,13 @@ public final class FolderService {
         return k;
     }
 
-    private ForwardDestination requireAssignedDestination(String sub, String destinationId) {
-        if (destinationId == null || destinationId.isBlank()) {
-            throw FdropException.badRequest("choose a destination");
-        }
-        ForwardDestination d = destinations.find(destinationId)
-                .orElseThrow(() -> FdropException.badRequest("unknown destination"));
-        if (!destinations.isAssigned(d.id(), sub)) {
-            throw FdropException.forbidden("that destination is not assigned to you");
-        }
-        if (!d.enabled()) {
-            throw FdropException.badRequest("that destination is disabled");
-        }
-        return d;
-    }
-
-    /** Rename and, for forward folders, destination and keep days. Owner only. */
-    public FolderView update(Principal p, String id, String newName, String destinationId, Integer keepDays) {
+    /**
+     * Rename and, for forward folders, destinations and keep days. Owner only. {@code destinationIds} null leaves
+     * the destinations alone; added ones get new files, and with {@code sendExisting} also the files still in the
+     * folder. Jobs already queued to a removed destination keep running.
+     */
+    public FolderView update(Principal p, String id, String newName, List<String> destinationIds,
+                             boolean sendExisting, Integer keepDays) {
         Folder f = owned(p, id);
         if (newName != null && !newName.equals(f.name())) {
             String name = Names.folderName(newName);
@@ -181,16 +180,21 @@ public final class FolderService {
                 throw e;
             }
         }
-        if (f.type() == FolderType.FORWARD && (destinationId != null || keepDays != null)) {
-            FolderForward ff = folders.forward(f.id()).orElseThrow();
-            String dest = destinationId == null ? ff.destinationId() : destinationId;
-            if (destinationId != null && !destinationId.equals(ff.destinationId())) {
-                requireAssignedDestination(p.sub(), destinationId);
+        if (f.type() == FolderType.FORWARD && keepDays != null) {
+            folders.putForward(new FolderForward(f.id(), keepDays(keepDays)));
+        }
+        if (f.type() == FolderType.FORWARD && destinationIds != null) {
+            List<String> before = folders.destinations(f.id());
+            List<String> after = forwarding.validate(f.ownerSub(), destinationIds, before);
+            List<String> added = after.stream().filter(d -> !before.contains(d)).toList();
+            List<String> removed = before.stream().filter(d -> !after.contains(d)).toList();
+            if (!added.isEmpty() || !removed.isEmpty()) {
+                folders.setDestinations(f.id(), after, p.sub());
+                Audit.log("folder.destinations", "user", p.username(), "folder", f.name(), "added", added,
+                        "removed", removed);
             }
-            folders.putForward(new FolderForward(f.id(), dest, keepDays == null ? ff.keepDays() : keepDays(keepDays)));
-            // Pending jobs keep their original destination; a paused folder may resume on a new one.
-            if (destinations.isAssigned(dest, f.ownerSub())) {
-                records.pauseFolder(f.id(), false);
+            if (sendExisting && !added.isEmpty()) {
+                forwarding.sendExisting(p, f, added);
             }
         }
         return view(p, folders.find(f.id()).orElseThrow());
@@ -218,11 +222,8 @@ public final class FolderService {
         records.markDeleted(prefix.toString());
         expiry.onDeleted(prefix);
         search.append(SearchRepo.Op.DELETE, prefix.toString(), null);
-        for (ForwardJob j : records.jobsForFolder(f.id(), 100_000)) {
-            if (j.state() != JobState.SENT && j.state() != JobState.FAILED) {
-                records.updateJob(j.id(), JobState.FAILED, "folder deleted", 0, j.firstFailedAt(), null);
-            }
-        }
+        // the files are gone, so nothing is left to send; finished jobs keep their history
+        records.cancelOpenJobs(f.id(), p.sub(), "folder deleted");
         folders.delete(f.id());
         Audit.log("folder.delete", "user", p.username(), "folder", f.name());
     }
@@ -267,9 +268,11 @@ public final class FolderService {
             throw FdropException.badRequest("ownership can only pass to a member");
         }
         if (f.type() == FolderType.FORWARD) {
-            String dest = folders.forward(f.id()).orElseThrow().destinationId();
-            if (!destinations.isAssigned(dest, to.sub())) {
-                throw FdropException.badRequest(username + " is not assigned this folder's destination");
+            for (String dest : folders.destinations(f.id())) {
+                if (!destinations.isAssigned(dest, to.sub())) {
+                    throw FdropException.badRequest(username + " is not assigned every one of this folder's"
+                            + " destinations (missing '" + forwarding.destinationName(dest) + "')");
+                }
             }
         }
         transfer(f, to.sub());

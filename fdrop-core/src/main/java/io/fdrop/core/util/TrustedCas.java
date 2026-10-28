@@ -19,7 +19,7 @@ import java.util.List;
 
 /**
  * Trust for one kind of outbound call (Keycloak, the S3 store): the CAs in a PEM bundle as well as the JDK's own trust
- * store, without changing the JVM-wide default (see "Security" in SPEC.md).
+ * store, without changing the JVM-wide default (see "Security" in spec/security-and-configuration.md).
  */
 public final class TrustedCas {
 

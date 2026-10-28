@@ -50,3 +50,14 @@
   font-size: var(--text-small);
   color: var(--color-muted);
 }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.item[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

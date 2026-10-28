@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Fdrop.Client;
 
 /// <summary>
-/// One upload through fdrop's resumable protocol (see "Resumable chunked uploads" in SPEC.md), hidden behind
+/// One upload through fdrop's resumable protocol (see "Resumable chunked uploads" in spec/resumable-uploads.md), hidden behind
 /// <see cref="FdropClient.UploadAsync(Stream, long, string, UploadOptions?, CancellationToken)"/>: create a session,
 /// read the source one chunk at a time in the server's chunk size, send up to <c>ParallelChunks</c> at once (each
 /// retried on its own), then complete with the whole file's SHA-256. Any failure or cancellation discards the session.

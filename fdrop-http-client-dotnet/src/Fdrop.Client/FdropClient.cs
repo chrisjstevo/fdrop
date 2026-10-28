@@ -169,6 +169,14 @@ public sealed class FdropClient : IFdropClient
         return await ExpectAsync(operation, r, type, ct).ConfigureAwait(false);
     }
 
+    private async Task CallAsync<TBody>(string operation, HttpMethod method, string pathAndQuery, TBody body,
+        JsonTypeInfo<TBody> bodyType, bool safeToRepeat, CancellationToken ct)
+    {
+        using var activity = Source.StartActivity(operation);
+        using var r = await SendAsync(operation, safeToRepeat, t => RequestAsync(method, pathAndQuery, Json(body, bodyType), t), ct).ConfigureAwait(false);
+        await CheckAsync(operation, r, ct).ConfigureAwait(false);
+    }
+
     private async Task CallAsync(string operation, HttpMethod method, string pathAndQuery, bool safeToRepeat, CancellationToken ct)
     {
         using var activity = Source.StartActivity(operation);
@@ -356,9 +364,18 @@ public sealed class FdropClient : IFdropClient
             FdropJson.Default.CreateFolderBody, false, FdropJson.Default.Folder, ct);
 
     /// <inheritdoc/>
-    public Task<Folder> CreateForwardFolderAsync(string name, string destinationId, int? keepDays = null, CancellationToken ct = default)
-        => CallAsync("creating folder " + name, HttpMethod.Post, "/api/v1/folders", new CreateFolderBody("forward", name, destinationId, keepDays),
+    public Task<Folder> CreateForwardFolderAsync(string name, IReadOnlyList<string> destinationIds, int? keepDays = null, CancellationToken ct = default)
+        => CallAsync("creating folder " + name, HttpMethod.Post, "/api/v1/folders", new CreateFolderBody("forward", name, destinationIds, keepDays),
             FdropJson.Default.CreateFolderBody, false, FdropJson.Default.Folder, ct);
+
+    /// <inheritdoc/>
+    public Task<Folder> CreateForwardFolderAsync(string name, string destinationId, int? keepDays = null, CancellationToken ct = default)
+        => CreateForwardFolderAsync(name, [destinationId], keepDays, ct);
+
+    /// <inheritdoc/>
+    public Task<Folder> SetForwardDestinationsAsync(string folderId, IReadOnlyList<string> destinationIds, bool sendExisting = false, CancellationToken ct = default)
+        => CallAsync("changing the destinations of folder " + folderId, HttpMethod.Patch, "/api/v1/folders/" + Q(folderId),
+            new DestinationsBody(destinationIds, sendExisting), FdropJson.Default.DestinationsBody, true, FdropJson.Default.Folder, ct);
 
     /// <inheritdoc/>
     public Task DeleteFolderAsync(string id, CancellationToken ct = default)
@@ -380,6 +397,12 @@ public sealed class FdropClient : IFdropClient
     /// <inheritdoc/>
     public Task RetryForwardJobAsync(string folderId, string jobId, CancellationToken ct = default)
         => CallAsync("retrying forward job " + jobId, HttpMethod.Post, $"/api/v1/folders/{Q(folderId)}/forward-jobs/{Q(jobId)}/retry", true, ct);
+
+    /// <inheritdoc/>
+    // not repeated: a second cancel of the same job is refused, which would hide that the first worked
+    public Task CancelForwardJobAsync(string folderId, string jobId, string reason, CancellationToken ct = default)
+        => CallAsync("stopping forward job " + jobId, HttpMethod.Post, $"/api/v1/folders/{Q(folderId)}/forward-jobs/{Q(jobId)}/cancel",
+            new CancelJobBody(reason), FdropJson.Default.CancelJobBody, false, ct);
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<ForwardDestination>> GetForwardDestinationsAsync(CancellationToken ct = default)

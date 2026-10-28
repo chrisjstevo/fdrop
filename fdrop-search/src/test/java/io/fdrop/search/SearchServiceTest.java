@@ -229,7 +229,7 @@ class SearchServiceTest {
         assertThat(find(alice, "draft")).isEmpty();
 
         // a folder rename re-indexes nothing: the location comes from the folder's current name
-        app.folderService.update(alice, f.id(), "New name", null, null);
+        app.folderService.update(alice, f.id(), "New name", null, false, null);
         assertThat(find(alice, "wombatbudget")).containsExactly("/shared/New name/final.txt");
 
         app.expiry.change(alice, "/shared/New name/final.txt", new ExpiryService.Change("1 sec", null), Via.HTTP,

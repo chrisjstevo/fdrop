@@ -15,7 +15,6 @@ import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.Via;
 import io.fdrop.core.model.Records.FileExpiry;
 import io.fdrop.core.model.Records.Folder;
-import io.fdrop.core.model.Records.FolderForward;
 import io.fdrop.core.model.Records.ForwardDestination;
 import io.fdrop.core.model.Records.UploadRecord;
 import io.fdrop.core.model.Records.User;
@@ -319,18 +318,25 @@ public final class FileService {
         return parent.equals("/home") || ((vp.kind() == Kind.SHARED || vp.kind() == Kind.FORWARD) && slashes == 2);
     }
 
-    /** A forward folder only accepts files while its destination is enabled and assigned to its owner. */
+    /**
+     * A forward folder only accepts files while every one of its destinations is enabled and assigned to its owner,
+     * since each new file goes to all of them.
+     */
     public void requireForwardOpen(Folder f) {
-        FolderForward ff = folders.forward(f.id())
-                .orElseThrow(() -> FdropException.conflict("forward folder has no destination"));
-        ForwardDestination d = destinations.find(ff.destinationId())
-                .orElseThrow(() -> FdropException.conflict("forward destination missing"));
-        if (!d.enabled()) {
-            throw FdropException.forbidden("forwarding to this destination is disabled; uploads are paused");
+        List<String> ids = folders.destinations(f.id());
+        if (ids.isEmpty()) {
+            throw FdropException.conflict("forward folder has no destination");
         }
-        if (!destinations.isAssigned(d.id(), f.ownerSub())) {
-            throw FdropException.forbidden("this forward folder's destination is no longer assigned to its owner;"
-                    + " uploads are paused");
+        for (String id : ids) {
+            ForwardDestination d = destinations.find(id)
+                    .orElseThrow(() -> FdropException.conflict("forward destination missing"));
+            if (!d.enabled()) {
+                throw FdropException.forbidden("forwarding to '" + d.name() + "' is disabled; uploads are paused");
+            }
+            if (!destinations.isAssigned(d.id(), f.ownerSub())) {
+                throw FdropException.forbidden("'" + d.name() + "' is no longer assigned to this forward folder's"
+                        + " owner; uploads are paused");
+            }
         }
     }
 

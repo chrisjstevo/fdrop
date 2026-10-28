@@ -1,0 +1,2 @@
+# sftp-target2 installs every file in this folder as an authorized key for user "target".
+# Paste fdrop's forward public key into authorized_keys here (gitignored); it works within 2 seconds.

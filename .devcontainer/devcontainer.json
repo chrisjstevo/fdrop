@@ -2,7 +2,7 @@
   "name": "fdrop",
   "dockerComposeFile": "compose.yaml",
   "service": "dev",
-  "runServices": ["certs", "localhost", "dev", "keycloak", "postgres", "sftp-target", "prometheus"],
+  "runServices": ["certs", "localhost", "dev", "keycloak", "postgres", "sftp-target", "sftp-target2", "prometheus"],
   "workspaceFolder": "/workspaces/fdrop",
   "features": {
     "ghcr.io/devcontainers/features/java:1": { "version": "none", "installMaven": "true", "mavenVersion": "3.9" },

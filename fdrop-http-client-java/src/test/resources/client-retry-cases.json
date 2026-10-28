@@ -1,5 +1,5 @@
 {
-  "description": "When fdrop's clients retry a request (see 'Java client library' and '.NET client library' in SPEC.md). Both clients' unit tests run every case: 'retry' means a second try is made and its success returned; 'error' a client exception without another try; 'api' the response is returned to the caller after one try.",
+  "description": "When fdrop's clients retry a request (see 'Java client library' and '.NET client library' in spec/clients.md). Both clients' unit tests run every case: 'retry' means a second try is made and its success returned; 'error' a client exception without another try; 'api' the response is returned to the caller after one try.",
   "cases": [
     {
       "failure": "connect-failed",

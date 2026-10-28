@@ -1,5 +1,5 @@
 # Keycloak for fdrop, run by the Keycloak operator, with the fdrop realm imported from the dev realm's definition
-# (see "Kubernetes deployment" in SPEC.md). The public TLS ends at Traefik, which calls Keycloak over HTTPS again,
+# (see "Kubernetes deployment" in spec/kubernetes.md). The public TLS ends at Traefik, which calls Keycloak over HTTPS again,
 # checking its internal-CA certificate: Keycloak serves no plain HTTP. A network policy admits only Traefik and the
 # monitoring namespace.
 

@@ -30,7 +30,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * A real fdrop HTTP server for the .NET client's integration tests (see ".NET client library" in SPEC.md), with the
+ * A real fdrop HTTP server for the .NET client's integration tests (see ".NET client library" in spec/clients.md), with the
  * test identity provider (bearer tokens like {@code user:alice}), an in-memory DB and storage in a temp folder. The
  * Maven build runs it around {@code dotnet test}:
  * <pre>

@@ -51,6 +51,8 @@ class ForwardWorkerTest {
     SshServer destination;
     Path remoteRoot;
     final AtomicReference<PublicKey> allowedKey = new AtomicReference<>();
+    /** Further destinations on the same server log in with their own keys. */
+    final List<PublicKey> moreKeys = new java.util.concurrent.CopyOnWriteArrayList<>();
     final Principal admin = TestSupport.admin("root");
     final Principal alice = TestSupport.user("alice");
 
@@ -61,8 +63,9 @@ class ForwardWorkerTest {
         destination.setHost("127.0.0.1");
         destination.setPort(0);
         destination.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(dir.resolve("dest_host_key")));
-        destination.setPublickeyAuthenticator((user, key, session) -> allowedKey.get() != null
-                && KeyUtils.compareKeys(allowedKey.get(), key));
+        destination.setPublickeyAuthenticator((user, key, session) -> (allowedKey.get() != null
+                && KeyUtils.compareKeys(allowedKey.get(), key))
+                || moreKeys.stream().anyMatch(k -> KeyUtils.compareKeys(k, key)));
         destination.setPasswordAuthenticator((user, pw, session) -> true);
         destination.setFileSystemFactory(new VirtualFileSystemFactory(remoteRoot));
         destination.setSubsystemFactories(List.of(new SftpSubsystemFactory()));
@@ -109,7 +112,7 @@ class ForwardWorkerTest {
     ForwardJob drop(DestinationService.AdminView d, String folder, String name, String content) throws Exception {
         FolderService.FolderView f = app.folderService.list(alice).stream().filter(x -> x.name().equals(folder))
                 .findFirst().orElseGet(() -> app.folderService.create(alice, FolderType.FORWARD, folder,
-                        d.destination().id(), 0));
+                        List.of(d.destination().id()), 0));
         byte[] data = content.getBytes(StandardCharsets.UTF_8);
         try (FileService.FileWrite w = app.files.openWrite(alice, "/forward/" + folder + "/" + name, data.length,
                 false, Via.HTTP, "127.0.0.1")) {
@@ -151,7 +154,7 @@ class ForwardWorkerTest {
     void keptFilesExpireTheirKeepDaysAfterSending() throws Exception {
         DestinationService.AdminView d = destination(null);
         FolderService.FolderView f = app.folderService.create(alice, FolderType.FORWARD, "Kept",
-                d.destination().id(), 3);
+                List.of(d.destination().id()), 3);
         // forward folders take no per-file expiry
         assertThatThrownBy(() -> app.files.openWrite(alice, "/forward/Kept/x.pdf", 1, false, Via.HTTP, null,
                 "1 day")).isInstanceOfSatisfying(io.fdrop.core.error.FdropException.class,
@@ -190,5 +193,50 @@ class ForwardWorkerTest {
         ForwardJob down = run(app.records.job(rejected.id()).orElseThrow());
         assertThat(down.state()).isEqualTo(JobState.RETRY_WAIT);
         assertThat(down.firstFailedAt()).isNotNull();
+    }
+
+    /** Another destination on the same server: its own directory and client key, pinned to {@code pin}. */
+    String anotherDestination(String name, String dir, String pin) {
+        SshTools.TestResult probe = app.destinationService.probe(admin, "127.0.0.1", port());
+        DestinationService.AdminView d = app.destinationService.create(admin, new DestinationService.DestinationInput(
+                name, null, "127.0.0.1", port(), dir, "fdrop", ServerAuth.HOST_KEY,
+                pin == null ? probe.hostKeyFingerprint() : pin, null, false, true));
+        moreKeys.add(MinaSshTools.parse(d.keys().get(0).publicKey()));
+        app.destinationService.assign(admin, d.destination().id(), "alice");
+        return d.destination().id();
+    }
+
+    @Test
+    void sendsEachFileToEveryDestinationAndDeletesAfterTheLast() throws Exception {
+        String a = destination(null).destination().id();
+        String b = anotherDestination("Partner A DR", "/dr/invoices", null);
+        String broken = anotherDestination("Old office", "/old", "SHA256:not-the-real-key");
+        FolderService.FolderView f = app.folderService.create(alice, FolderType.FORWARD, "Replicated",
+                List.of(a, b, broken), 0);
+        byte[] data = "replicated bytes".getBytes(StandardCharsets.UTF_8);
+        try (FileService.FileWrite w = app.files.openWrite(alice, "/forward/Replicated/r.pdf", data.length, false,
+                Via.HTTP, "127.0.0.1")) {
+            w.write(ByteBuffer.wrap(data));
+            w.commit();
+        }
+        java.util.Map<String, ForwardJob> jobs = new java.util.HashMap<>();
+        app.folderService.jobs(alice, f.id(), 10).forEach(j -> jobs.put(j.destinationId(), j));
+        assertThat(jobs).containsOnlyKeys(a, b, broken);
+
+        assertThat(run(jobs.get(a)).state()).isEqualTo(JobState.SENT);
+        assertThat(remoteRoot.resolve("inbox/invoices/r.pdf")).hasBinaryContent(data);
+        assertThat(app.files.stat(alice, "/forward/Replicated/r.pdf")).as("others still to go").isNotNull();
+
+        ForwardJob mismatch = run(jobs.get(broken));
+        assertThat(mismatch.state()).as("a wrong host key fails only its own job").isEqualTo(JobState.FAILED);
+        assertThat(run(jobs.get(b)).state()).isEqualTo(JobState.SENT);
+        assertThat(remoteRoot.resolve("dr/invoices/r.pdf")).hasBinaryContent(data);
+        assertThat(app.files.stat(alice, "/forward/Replicated/r.pdf")).as("held by the failed destination")
+                .isNotNull();
+
+        app.forwarding.cancel(alice, f.id(), mismatch.id(), "office closed");
+        assertThatThrownBy(() -> app.files.stat(alice, "/forward/Replicated/r.pdf"))
+                .isInstanceOf(io.fdrop.core.error.FdropException.class);
+        assertThat(remoteRoot.resolve("old")).doesNotExist();
     }
 }

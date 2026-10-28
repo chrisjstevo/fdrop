@@ -36,7 +36,7 @@ import java.util.function.BooleanSupplier;
 
 /**
  * {@code fdrop watch}: listens to one local folder and uploads each new file, once it is ready, into one server folder
- * (see "Watching a directory" in SPEC.md). {@link WatchService} events say where to look; scans at start, after an
+ * (see "Watching a directory" in spec/clients.md). {@link WatchService} events say where to look; scans at start, after an
  * overflow and every {@code --rescan} catch what events miss; with {@code --poll} only scans are used. The ledger stops
  * a file going up twice.
  */

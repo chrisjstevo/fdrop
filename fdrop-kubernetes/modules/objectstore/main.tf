@@ -1,4 +1,4 @@
-# Garage: the S3 object store fdrop's files live in, on the nodes' local disks (see "Object storage" in SPEC.md).
+# Garage: the S3 object store fdrop's files live in, on the nodes' local disks (see "Object storage" in spec/kubernetes.md).
 # Garage finds its peers through Kubernetes (GarageNode objects); a Job then lays out the cluster, creates the bucket
 # and imports fdrop's key, doing only what is missing. Garage speaks only plain HTTP, so it listens on 127.0.0.1 and two
 # ghostunnel sidecars put TLS in front of its S3 and admin APIs, with a certificate from the internal CA.

@@ -36,7 +36,8 @@ public final class RecordRepo {
                 rs.getString("upload_record_id"), rs.getString("storage_key"), rs.getString("file_name"),
                 rs.getLong("size"), JobState.valueOf(rs.getString("state")), rs.getInt("attempts"),
                 rs.getString("last_error"), rs.getLong("next_attempt_at"), Db.getLong(rs, "first_failed_at"),
-                rs.getLong("created_at"), rs.getLong("updated_at"), Db.getLong(rs, "sent_at"));
+                rs.getLong("created_at"), rs.getLong("updated_at"), Db.getLong(rs, "sent_at"),
+                rs.getString("cancelled_by"), rs.getString("cancel_reason"));
     }
 
     // ---- upload records ----
@@ -183,13 +184,17 @@ public final class RecordRepo {
 
     // ---- forward jobs ----
 
+    /** Upload record statuses that follow forward jobs; any other status (deleted, expired) is left alone. */
+    private static final String FORWARD_STATUSES = "('QUEUED', 'SENDING', 'RETRY_WAIT', 'PAUSED', 'FAILED', 'SENT',"
+            + " 'CANCELLED')";
+
     public void insertJob(ForwardJob j) {
         db.update("INSERT INTO forward_job (id, folder_id, destination_id, upload_record_id, storage_key, file_name,"
                         + " size, state, attempts, last_error, next_attempt_at, first_failed_at, created_at, updated_at,"
-                        + " sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", j.id(), j.folderId(),
-                j.destinationId(), j.uploadRecordId(), j.storageKey(), j.fileName(), j.size(), j.state(),
-                j.attempts(), j.lastError(), j.nextAttemptAt(), j.firstFailedAt(), j.createdAt(), j.updatedAt(),
-                j.sentAt());
+                        + " sent_at, cancelled_by, cancel_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                        + " ?, ?)", j.id(), j.folderId(), j.destinationId(), j.uploadRecordId(), j.storageKey(),
+                j.fileName(), j.size(), j.state(), j.attempts(), j.lastError(), j.nextAttemptAt(), j.firstFailedAt(),
+                j.createdAt(), j.updatedAt(), j.sentAt(), j.cancelledBy(), j.cancelReason());
     }
 
     public Optional<ForwardJob> job(String id) {
@@ -197,8 +202,14 @@ public final class RecordRepo {
     }
 
     public List<ForwardJob> jobsForFolder(String folderId, int limit) {
-        return db.query("SELECT * FROM forward_job WHERE folder_id = ? ORDER BY created_at DESC LIMIT ?",
-                RecordRepo::job, folderId, limit);
+        return db.query("SELECT * FROM forward_job WHERE folder_id = ? ORDER BY created_at DESC, destination_id"
+                + " LIMIT ?", RecordRepo::job, folderId, limit);
+    }
+
+    /** Every job of one uploaded file: one per destination. */
+    public List<ForwardJob> jobsForRecord(String uploadRecordId) {
+        return db.query("SELECT * FROM forward_job WHERE upload_record_id = ? ORDER BY created_at, destination_id",
+                RecordRepo::job, uploadRecordId);
     }
 
     /** Due jobs in arrival order. */
@@ -213,28 +224,100 @@ public final class RecordRepo {
                 + " WHERE id = ? AND state = ?", System.currentTimeMillis(), id, from) > 0;
     }
 
-    public void updateJob(String id, JobState state, String error, long nextAttemptAt, Long firstFailedAt,
-                          Long sentAt) {
+    /**
+     * Moves a job to its next state and the file's upload record to the overall status of all its jobs. Returns
+     * true when this change finished the file: every one of its jobs is now sent or cancelled.
+     */
+    public boolean updateJob(String id, JobState state, String error, long nextAttemptAt, Long firstFailedAt,
+                             Long sentAt) {
         db.update("UPDATE forward_job SET state = ?, last_error = ?, next_attempt_at = ?, first_failed_at = ?,"
                         + " sent_at = ?, updated_at = ? WHERE id = ?", state, error, nextAttemptAt, firstFailedAt,
                 sentAt, System.currentTimeMillis(), id);
-        db.update("UPDATE upload_record SET status = ? WHERE id = (SELECT upload_record_id FROM forward_job"
-                + " WHERE id = ?)", state, id);
+        return job(id).map(j -> refreshRecord(j.uploadRecordId())).orElse(false);
     }
 
-    /** Pauses or resumes every unfinished job in a folder (assignment removed / restored). */
-    public void pauseFolder(String folderId, boolean pause) {
-        if (pause) {
-            db.update("UPDATE upload_record SET status = 'PAUSED' WHERE id IN (SELECT upload_record_id FROM"
-                    + " forward_job WHERE folder_id = ? AND state IN ('QUEUED', 'RETRY_WAIT'))", folderId);
-            db.update("UPDATE forward_job SET state = 'PAUSED', updated_at = ? WHERE folder_id = ?"
-                    + " AND state IN ('QUEUED', 'RETRY_WAIT')", System.currentTimeMillis(), folderId);
-        } else {
-            db.update("UPDATE upload_record SET status = 'QUEUED' WHERE id IN (SELECT upload_record_id FROM"
-                    + " forward_job WHERE folder_id = ? AND state = 'PAUSED')", folderId);
-            db.update("UPDATE forward_job SET state = 'QUEUED', next_attempt_at = ?, updated_at = ?"
-                    + " WHERE folder_id = ? AND state = 'PAUSED'", 0L, System.currentTimeMillis(), folderId);
+    /** The owner gives up on a failed job's destination. Returns true when that finished the file. */
+    public boolean cancelJob(String id, String bySub, String reason) {
+        int n = db.update("UPDATE forward_job SET state = 'CANCELLED', cancelled_by = ?, cancel_reason = ?,"
+                + " updated_at = ? WHERE id = ? AND state = 'FAILED'", bySub, reason, System.currentTimeMillis(), id);
+        return n > 0 && job(id).map(j -> refreshRecord(j.uploadRecordId())).orElse(false);
+    }
+
+    /** A forward folder was deleted: every job not yet sent or cancelled is cancelled. */
+    public int cancelOpenJobs(String folderId, String bySub, String reason) {
+        return db.update("UPDATE forward_job SET state = 'CANCELLED', cancelled_by = ?, cancel_reason = ?,"
+                + " updated_at = ? WHERE folder_id = ? AND state NOT IN ('SENT', 'CANCELLED')", bySub, reason,
+                System.currentTimeMillis(), folderId);
+    }
+
+    /**
+     * A file's overall forward status from its jobs, the worst first: failed, paused, sending (also while a job
+     * waits to retry), queued; sent once every job is sent or cancelled, and cancelled if none was sent.
+     */
+    public static RecordStatus overall(List<JobState> states) {
+        if (states.isEmpty()) {
+            return null;
         }
+        if (states.contains(JobState.FAILED)) {
+            return RecordStatus.FAILED;
+        }
+        if (states.contains(JobState.PAUSED)) {
+            return RecordStatus.PAUSED;
+        }
+        if (states.contains(JobState.SENDING) || states.contains(JobState.RETRY_WAIT)) {
+            return RecordStatus.SENDING;
+        }
+        if (states.contains(JobState.QUEUED)) {
+            return RecordStatus.QUEUED;
+        }
+        return states.contains(JobState.SENT) ? RecordStatus.SENT : RecordStatus.CANCELLED;
+    }
+
+    /** Sets an upload record's status from its jobs, e.g. after new jobs were queued for it. */
+    public void refreshStatus(String uploadRecordId) {
+        refreshRecord(uploadRecordId);
+    }
+
+    /**
+     * Sets an upload record's status from its jobs. Returns true only for the change that finished the file, so
+     * when two destinations finish at once exactly one caller deletes or keeps it.
+     */
+    private boolean refreshRecord(String uploadRecordId) {
+        if (uploadRecordId == null) {
+            return false;
+        }
+        List<JobState> states = db.query("SELECT state FROM forward_job WHERE upload_record_id = ?",
+                rs -> JobState.valueOf(rs.getString(1)), uploadRecordId);
+        RecordStatus s = overall(states);
+        if (s == null) {
+            return false;
+        }
+        int n = db.update("UPDATE upload_record SET status = ? WHERE id = ? AND status <> ? AND status IN "
+                + FORWARD_STATUSES, s, uploadRecordId, s);
+        return n > 0 && (s == RecordStatus.SENT || s == RecordStatus.CANCELLED);
+    }
+
+    /**
+     * Pauses or resumes a folder's unfinished jobs to one destination (destination disabled, or no longer assigned
+     * to the owner, and back). Jobs to the folder's other destinations are not touched.
+     */
+    public void pauseDestination(String folderId, String destinationId, boolean pause) {
+        List<String> touched;
+        if (pause) {
+            touched = db.query("SELECT DISTINCT upload_record_id FROM forward_job WHERE folder_id = ?"
+                    + " AND destination_id = ? AND state IN ('QUEUED', 'RETRY_WAIT')", rs -> rs.getString(1),
+                    folderId, destinationId);
+            db.update("UPDATE forward_job SET state = 'PAUSED', updated_at = ? WHERE folder_id = ?"
+                    + " AND destination_id = ? AND state IN ('QUEUED', 'RETRY_WAIT')", System.currentTimeMillis(),
+                    folderId, destinationId);
+        } else {
+            touched = db.query("SELECT DISTINCT upload_record_id FROM forward_job WHERE folder_id = ?"
+                    + " AND destination_id = ? AND state = 'PAUSED'", rs -> rs.getString(1), folderId, destinationId);
+            db.update("UPDATE forward_job SET state = 'QUEUED', next_attempt_at = ?, updated_at = ?"
+                    + " WHERE folder_id = ? AND destination_id = ? AND state = 'PAUSED'", 0L,
+                    System.currentTimeMillis(), folderId, destinationId);
+        }
+        touched.forEach(this::refreshRecord);
     }
 
     public long countJobs(JobState state, String destinationId) {
@@ -242,10 +325,16 @@ public final class RecordRepo {
                 destinationId);
     }
 
-    /** Jobs that were sent but whose file is kept: delete files older than their folder's keep days. */
-    public List<ForwardJob> sentBefore(String folderId, long cutoff) {
-        return db.query("SELECT * FROM forward_job WHERE folder_id = ? AND state = 'SENT' AND sent_at < ?",
-                RecordRepo::job, folderId, cutoff);
+    /** Jobs to a destination that are not yet sent or cancelled. */
+    public long countOpenJobs(String destinationId) {
+        return db.queryLong("SELECT COUNT(*) FROM forward_job WHERE destination_id = ?"
+                + " AND state NOT IN ('SENT', 'CANCELLED')", destinationId);
+    }
+
+    /** A forward folder's upload records whose files may still be in fdrop, to send to an added destination. */
+    public List<UploadRecord> forwardRecordsInFolder(String folderId) {
+        return db.query("SELECT * FROM upload_record WHERE folder_id = ? AND went_to = 'FORWARD' AND status IN "
+                + FORWARD_STATUSES + " ORDER BY completed_at", RecordRepo::record, folderId);
     }
 
     /** Recovers jobs left SENDING by a crash. */

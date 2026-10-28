@@ -20,6 +20,8 @@ export interface Me {
     userManagement: boolean;
     forwarding: boolean;
     sftpPort?: number;
+    /** A forward folder sends each file to between 1 and this many destinations. */
+    maxDestinationsPerFolder?: number;
   };
 }
 
@@ -126,8 +128,12 @@ export interface FolderView {
   path: string;
   owner: string;
   role: "OWNER" | "READ" | "WRITE";
+  /** The first destination, for code written when a folder had one. */
   destinationId?: string;
+  /** Every destination's name, comma-separated. */
   destinationName?: string;
+  /** A forward folder's destinations; each paused when disabled or no longer assigned to the owner. */
+  destinations?: FolderDestination[];
   keepDays?: number;
   paused: boolean;
   members: MemberView[];
@@ -136,10 +142,21 @@ export interface FolderView {
   maxExpiry?: string;
 }
 
-export type JobState = "QUEUED" | "SENDING" | "RETRY_WAIT" | "SENT" | "FAILED" | "PAUSED";
+export interface FolderDestination {
+  id: string;
+  name: string;
+  paused: boolean;
+}
 
+export type JobState = "QUEUED" | "SENDING" | "RETRY_WAIT" | "SENT" | "FAILED" | "PAUSED" | "CANCELLED";
+
+/** One file to one destination; a file's jobs share `uploadRecordId`. */
 export interface ForwardJob {
   id: string;
+  uploadRecordId?: string;
+  destinationId: string;
+  destinationName: string;
+  cancelReason?: string;
   fileName: string;
   size: number;
   state: JobState;
@@ -174,8 +191,20 @@ export interface HistoryRow {
   expiresAt?: string;
   canDownload: boolean;
   canRetry: boolean;
+  /** The first failed destination's job, for Retry. */
   jobId?: string;
   folderId?: string;
+  /** For forward uploads: where the file stands at each destination. */
+  destinations?: DestinationStatus[];
+}
+
+export interface DestinationStatus {
+  jobId: string;
+  destinationId: string;
+  destinationName: string;
+  state: JobState;
+  error?: string;
+  sentAt?: string;
 }
 
 export interface HistoryPage {

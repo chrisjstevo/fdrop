@@ -1,4 +1,4 @@
-# Operators and cluster add-ons fdrop's deployment builds on (see "Kubernetes deployment" in SPEC.md). Each can be
+# Operators and cluster add-ons fdrop's deployment builds on (see "Kubernetes deployment" in spec/kubernetes.md). Each can be
 # turned off for a cluster that already runs it.
 
 locals {
@@ -31,7 +31,7 @@ resource "helm_release" "cert_manager" {
 }
 
 # The internal CA: certificates for the hops inside the cluster (Keycloak behind Traefik, Garage's TLS sidecars), so
-# no service is called over plain HTTP (see "Security" in SPEC.md). OpenTofu makes the CA, as its certificate must also
+# no service is called over plain HTTP (see "Security" in spec/security-and-configuration.md). OpenTofu makes the CA, as its certificate must also
 # reach fdrop's configuration; the key stays in the encrypted state and in cert-manager's namespace. A new CA is made
 # by the first apply in its last year; cert-manager then reissues the certificates it signs as they renew.
 resource "tls_private_key" "internal_ca" {

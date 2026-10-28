@@ -112,24 +112,50 @@ public final class FolderRepo {
 
     public Optional<FolderForward> forward(String folderId) {
         return db.queryOne("SELECT * FROM folder_forward WHERE folder_id = ?",
-                rs -> new FolderForward(rs.getString("folder_id"), rs.getString("destination_id"),
-                        rs.getInt("keep_days")), folderId);
+                rs -> new FolderForward(rs.getString("folder_id"), rs.getInt("keep_days")), folderId);
     }
 
     public void putForward(FolderForward ff) {
         db.inTransaction(() -> {
-            if (db.update("UPDATE folder_forward SET destination_id = ?, keep_days = ? WHERE folder_id = ?",
-                    ff.destinationId(), ff.keepDays(), ff.folderId()) == 0) {
-                db.update("INSERT INTO folder_forward (folder_id, destination_id, keep_days) VALUES (?, ?, ?)",
-                        ff.folderId(), ff.destinationId(), ff.keepDays());
+            if (db.update("UPDATE folder_forward SET keep_days = ? WHERE folder_id = ?", ff.keepDays(),
+                    ff.folderId()) == 0) {
+                db.update("INSERT INTO folder_forward (folder_id, keep_days) VALUES (?, ?)", ff.folderId(),
+                        ff.keepDays());
             }
             return null;
         });
     }
 
-    /** Forward folders using a destination. */
+    /** A forward folder's destination ids, in the order they were added. */
+    public List<String> destinations(String folderId) {
+        return db.query("SELECT destination_id FROM folder_destination WHERE folder_id = ?"
+                + " ORDER BY added_at, destination_id", rs -> rs.getString(1), folderId);
+    }
+
+    /** Makes a forward folder's destinations exactly {@code ids}: adds the new ones, removes the rest. */
+    public void setDestinations(String folderId, List<String> ids, String by) {
+        db.inTransaction(() -> {
+            List<String> before = destinations(folderId);
+            long now = System.currentTimeMillis();
+            for (String id : before) {
+                if (!ids.contains(id)) {
+                    db.update("DELETE FROM folder_destination WHERE folder_id = ? AND destination_id = ?", folderId,
+                            id);
+                }
+            }
+            for (String id : ids) {
+                if (!before.contains(id)) {
+                    db.update("INSERT INTO folder_destination (folder_id, destination_id, added_at, added_by)"
+                            + " VALUES (?, ?, ?, ?)", folderId, id, now++, by);
+                }
+            }
+            return null;
+        });
+    }
+
+    /** Forward folders sending to a destination. */
     public List<Folder> usingDestination(String destinationId) {
-        return db.query("SELECT f.* FROM folder f JOIN folder_forward ff ON ff.folder_id = f.id"
-                + " WHERE ff.destination_id = ? ORDER BY f.name_lower", FolderRepo::folder, destinationId);
+        return db.query("SELECT f.* FROM folder f JOIN folder_destination fd ON fd.folder_id = f.id"
+                + " WHERE fd.destination_id = ? ORDER BY f.name_lower", FolderRepo::folder, destinationId);
     }
 }

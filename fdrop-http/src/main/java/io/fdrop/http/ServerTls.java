@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * The TLS of every fdrop listener: the web and API port, the application mTLS port and the management port all use
  * {@code http.tls.cert} and {@code http.tls.key}, TLS 1.3 or 1.2, and nothing listens on plain HTTP (see "Security" in
- * SPEC.md). The files are checked every minute and reloaded when they change, so a renewed certificate needs no
+ * spec/security-and-configuration.md). The files are checked every minute and reloaded when they change, so a renewed certificate needs no
  * restart.
  */
 public final class ServerTls implements AutoCloseable {

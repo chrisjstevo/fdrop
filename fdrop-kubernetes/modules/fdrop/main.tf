@@ -1,4 +1,4 @@
-# fdrop as a StatefulSet (see "Kubernetes deployment" in SPEC.md): each pod keeps its own search and audit indexes on
+# fdrop as a StatefulSet (see "Kubernetes deployment" in spec/kubernetes.md): each pod keeps its own search and audit indexes on
 # its own volume, and its stable name is its audit node. Files live in the in-cluster Garage store.
 
 locals {

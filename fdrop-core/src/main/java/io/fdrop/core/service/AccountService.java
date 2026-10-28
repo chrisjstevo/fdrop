@@ -12,8 +12,9 @@ import io.fdrop.core.db.UploadRepo;
 import io.fdrop.core.db.UserRepo;
 import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Records.Folder;
+import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.UserKind;
-import io.fdrop.core.model.Records.FolderForward;
+import io.fdrop.core.model.Enums.WentTo;
 import io.fdrop.core.model.Records.ForwardDestination;
 import io.fdrop.core.model.Records.SshKey;
 import io.fdrop.core.model.Records.UploadRecord;
@@ -28,9 +29,18 @@ import java.util.Optional;
 /** The signed-in user's own things: profile, quota, SSH keys, and the My uploads history. */
 public final class AccountService {
 
-    /** A My uploads row with folder and destination names resolved, and whether its links still work. */
+    /**
+     * A My uploads row with folder and destination names resolved, and whether its links still work. A forward
+     * upload lists each destination it is sent to; {@code destinationName} joins their names, and {@code jobId}
+     * is the first failed job, for clients written for one destination.
+     */
     public record HistoryRow(UploadRecord record, String folderName, String destinationName, boolean reachable,
-                             boolean canRetry, String jobId) {
+                             boolean canRetry, String jobId, List<DestinationStatus> destinations) {
+    }
+
+    /** Where one forward upload stands at one destination. */
+    public record DestinationStatus(String jobId, String destinationId, String destinationName, JobState state,
+                                    String error, Long sentAt) {
     }
 
     /** One page of My uploads. */
@@ -134,24 +144,26 @@ public final class AccountService {
             String destName = null;
             boolean canRetry = false;
             String jobId = null;
-            if (folder.isPresent() && r.wentTo() == io.fdrop.core.model.Enums.WentTo.FORWARD) {
-                Optional<FolderForward> ff = folders.forward(folder.get().id());
-                if (ff.isPresent()) {
-                    destName = destNames.computeIfAbsent(ff.get().destinationId(),
-                            id -> destinations.find(id).map(ForwardDestination::name).orElse(null));
-                }
-                canRetry = folder.get().ownerSub().equals(p.sub())
-                        && r.status() == io.fdrop.core.model.Enums.RecordStatus.FAILED;
-                if (canRetry) {
-                    jobId = records.jobsForFolder(folder.get().id(), 1000).stream()
-                            .filter(j -> r.id().equals(j.uploadRecordId())).map(j -> j.id()).findFirst()
-                            .orElse(null);
+            List<DestinationStatus> dests = List.of();
+            if (r.wentTo() == WentTo.FORWARD) {
+                dests = records.jobsForRecord(r.id()).stream().map(j -> new DestinationStatus(j.id(),
+                        j.destinationId(), destNames.computeIfAbsent(j.destinationId(),
+                        id -> destinations.find(id).map(ForwardDestination::name).orElse("(deleted destination)")),
+                        j.state(), j.lastError(), j.sentAt())).toList();
+                destName = dests.isEmpty() ? null
+                        : String.join(", ", dests.stream().map(DestinationStatus::destinationName).toList());
+                boolean owner = folder.isPresent() && folder.get().ownerSub().equals(p.sub());
+                jobId = dests.stream().filter(d -> d.state() == JobState.FAILED).map(DestinationStatus::jobId)
+                        .findFirst().orElse(null);
+                canRetry = owner && jobId != null;
+                if (!owner) {
+                    jobId = null;
                 }
             }
             boolean reachable = r.storageKey() != null && (r.folderId() == null
                     ? r.storageKey().startsWith(PathResolver.homeKey(p.sub()) + "/")
                     : folder.isPresent() && resolver.permission(p, folder.get()).isPresent());
-            return new HistoryRow(r, folderName, destName, reachable, canRetry, jobId);
+            return new HistoryRow(r, folderName, destName, reachable, canRetry, jobId, dests);
         }).toList();
         return new HistoryPage(rows, page.totalCount(), page.totalBytes(), page.nextCursor());
     }

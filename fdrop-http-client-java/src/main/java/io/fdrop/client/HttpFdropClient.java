@@ -344,15 +344,24 @@ final class HttpFdropClient implements FdropClient {
     }
 
     @Override
-    public Folder createForwardFolder(String name, String destinationId, Integer keepDays) {
+    public Folder createForwardFolder(String name, List<String> destinationIds, Integer keepDays) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "forward");
         body.put("name", name);
-        body.put("destinationId", destinationId);
+        body.put("destinationIds", destinationIds);
         if (keepDays != null) {
             body.put("keepDays", keepDays);
         }
         return call("creating folder " + name, "POST", "/api/v1/folders", body, false, Folder.class);
+    }
+
+    @Override
+    public Folder setForwardDestinations(String folderId, List<String> destinationIds, boolean sendExisting) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("destinationIds", destinationIds);
+        body.put("sendExisting", sendExisting);
+        return call("changing the destinations of folder " + folderId, "PATCH", "/api/v1/folders/" + q(folderId),
+                body, true, Folder.class);
     }
 
     @Override
@@ -383,6 +392,13 @@ final class HttpFdropClient implements FdropClient {
     public void retryForwardJob(String folderId, String jobId) {
         call("retrying forward job " + jobId, "POST", "/api/v1/folders/" + q(folderId) + "/forward-jobs/" + q(jobId)
                 + "/retry", null, true, Void.class);
+    }
+
+    @Override
+    public void cancelForwardJob(String folderId, String jobId, String reason) {
+        // not repeated: a second cancel of the same job is refused, which would hide that the first worked
+        call("stopping forward job " + jobId, "POST", "/api/v1/folders/" + q(folderId) + "/forward-jobs/" + q(jobId)
+                + "/cancel", Map.of("reason", reason), false, Void.class);
     }
 
     @Override

@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
 
 /**
  * Checks the metadata DB's TLS settings at startup and turns them into pgJDBC connection properties (see "Metadata DB
- * connection" in SPEC.md). PostgreSQL is reached with {@code sslmode=verify-full} and a client certificate unless
+ * connection" in spec/security-and-configuration.md). PostgreSQL is reached with {@code sslmode=verify-full} and a client certificate unless
  * {@code db.tls.mode} is explicitly {@code disable}; H2 ignores all of it.
  */
 public final class DbTls {

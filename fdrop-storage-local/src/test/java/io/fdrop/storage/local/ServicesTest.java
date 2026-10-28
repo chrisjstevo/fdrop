@@ -208,14 +208,14 @@ class ServicesTest {
                 "SHA256:abc", null, false, true));
         assertThat(d.keys()).hasSize(1);
         assertThatThrownBy(() -> app.folderService.create(alice, FolderType.FORWARD, "To Partner A",
-                d.destination().id(), 0)).isInstanceOf(FdropException.class).hasMessageContaining("not assigned");
+                List.of(d.destination().id()), 0)).isInstanceOf(FdropException.class).hasMessageContaining("not assigned");
 
         app.destinationService.assign(admin, d.destination().id(), "alice");
         assertThat(app.destinationService.forUser(alice)).extracting(DestinationService.UserView::name)
                 .containsExactly("Partner A");
         assertThat(app.destinationService.forUser(bob)).isEmpty();
         FolderService.FolderView f = app.folderService.create(alice, FolderType.FORWARD, "To Partner A",
-                d.destination().id(), 0);
+                List.of(d.destination().id()), 0);
 
         assertThatThrownBy(() -> app.files.mkdir(alice, "/forward/To Partner A/sub")).isInstanceOf(FdropException.class);
         put(alice, "/forward/To Partner A/invoice.pdf", "x".getBytes(StandardCharsets.UTF_8));
@@ -240,6 +240,18 @@ class ServicesTest {
 
         // standard users cannot manage destinations
         assertThatThrownBy(() -> app.destinationService.list(alice)).isInstanceOf(FdropException.class);
+    }
+
+    @Test
+    void aUsernameMovesToTheKeycloakAccountNowUsingIt() {
+        // the realm was imported again (or the user deleted and recreated): same username, new Keycloak id
+        app.accounts.ensure(new Principal("sub-old-dave", "dave", null, true, false));
+        app.accounts.ensure(new Principal("sub-new-dave", "dave", null, true, false));
+        assertThat(app.users.findByUsername("dave").orElseThrow().sub()).isEqualTo("sub-new-dave");
+        assertThat(app.users.find("sub-old-dave").orElseThrow().username()).isEqualTo("dave~sub-old-");
+        // signing in again changes nothing
+        app.accounts.ensure(new Principal("sub-new-dave", "dave", null, true, false));
+        assertThat(app.users.find("sub-old-dave").orElseThrow().username()).isEqualTo("dave~sub-old-");
     }
 
     private static ReadableByteChannel ch(byte[] b) {

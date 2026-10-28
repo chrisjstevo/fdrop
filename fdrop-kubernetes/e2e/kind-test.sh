@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end test of the Kubernetes deployment on a fresh kind cluster (see "Kubernetes deployment" in SPEC.md, Tests).
+# End-to-end test of the Kubernetes deployment on a fresh kind cluster (see "Kubernetes deployment" in spec/kubernetes.md, Tests).
 # Run on a machine with Docker, kind, kubectl, tofu, sftp, curl and
 # python3, from the repository: ./mvnw -pl fdrop-kubernetes verify -Pkind, or bash fdrop-kubernetes/e2e/kind-test.sh.
 #  1. builds fdrop's image and creates the cluster, loads the image, applies environments/kind

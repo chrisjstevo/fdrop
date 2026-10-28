@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * The admin side of the audit log: browsing from the DB, searching through the audit index, export, chain checks, and
- * the nightly retention prune (see "Audit log" in SPEC.md). Every method checks the caller is an admin; the HTTP layer
+ * the nightly retention prune (see "Audit log" in spec/audit-log.md). Every method checks the caller is an admin; the HTTP layer
  * also requires a two-factor session for every admin route.
  */
 public final class AuditService implements AutoCloseable {

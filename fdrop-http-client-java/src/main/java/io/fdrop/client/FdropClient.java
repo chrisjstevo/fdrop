@@ -107,8 +107,22 @@ public interface FdropClient extends AutoCloseable {
 
     Folder createSharedFolder(String name);
 
-    /** A forward folder sending files to one of {@link #forwardDestinations()}; {@code keepDays} may be null. */
-    Folder createForwardFolder(String name, String destinationId, Integer keepDays);
+    /**
+     * A forward folder sending each file to every one of {@code destinationIds}, chosen from
+     * {@link #forwardDestinations()}; {@code keepDays} may be null.
+     */
+    Folder createForwardFolder(String name, List<String> destinationIds, Integer keepDays);
+
+    /** A forward folder sending files to one destination; {@code keepDays} may be null. */
+    default Folder createForwardFolder(String name, String destinationId, Integer keepDays) {
+        return createForwardFolder(name, List.of(destinationId), keepDays);
+    }
+
+    /**
+     * Changes a forward folder's destinations (owner only). Added ones get new files, and with {@code sendExisting}
+     * also the files still in the folder; files already queued to a removed one are still sent to it.
+     */
+    Folder setForwardDestinations(String folderId, List<String> destinationIds, boolean sendExisting);
 
     void deleteFolder(String id);
 
@@ -121,6 +135,9 @@ public interface FdropClient extends AutoCloseable {
     List<ForwardJob> forwardJobs(String folderId);
 
     void retryForwardJob(String folderId, String jobId);
+
+    /** Stops sending one file to one destination whose job failed (owner only); {@code reason} is audited. */
+    void cancelForwardJob(String folderId, String jobId, String reason);
 
     List<ForwardDestination> forwardDestinations();
 

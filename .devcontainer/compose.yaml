@@ -4,7 +4,7 @@ x-podman:
 services:
   certs:                             # one-shot: creates the dev CA and certificates in .devcontainer/certs/
     image: docker.io/library/alpine:3.22
-    command: ["sh", "-c", "apk add -q --no-cache openssl && sh /repo/scripts/dev-certs.sh /repo/.devcontainer/certs"]
+    command: ["sh", "-c", "apk add -q --no-cache openssl openssh-keygen && sh /repo/scripts/dev-certs.sh /repo/.devcontainer/certs"]
     volumes:
       - ..:/repo:z
   localhost:                         # owns the shared network so dev can be recreated without the services joined to it
@@ -76,8 +76,25 @@ services:
   sftp-target:                       # destination for trying forward folders
     image: docker.io/atmoz/sftp:alpine
     command: "target::1001::inbox"   # no password: public-key login only
+    environment:
+      HOST_KEY: /etc/fdrop/certs/sftp-target_ssh_host_ed25519_key   # fixed, so a pinned host key survives recreating
     volumes:
       - ./sftp-target:/home/target/.ssh/keys:ro,z   # every file is a key; README.pub keeps the folder non-empty
+      - ./sftp-target-setup.sh:/etc/sftp.d/setup.sh:ro,z   # installs the host key, and new keys within 2 s
+      - ./certs:/etc/fdrop/certs:ro,z
+    depends_on:
+      certs: { condition: service_completed_successfully }
+  sftp-target2:                      # a second destination, for a forward folder sending to two servers
+    image: docker.io/atmoz/sftp:alpine
+    command: "target::1001::inbox"
+    environment:
+      HOST_KEY: /etc/fdrop/certs/sftp-target2_ssh_host_ed25519_key
+    volumes:
+      - ./sftp-target2:/home/target/.ssh/keys:ro,z
+      - ./sftp-target-setup.sh:/etc/sftp.d/setup.sh:ro,z
+      - ./certs:/etc/fdrop/certs:ro,z
+    depends_on:
+      certs: { condition: service_completed_successfully }
 volumes:
   fdrop-m2:
   fdrop-nuget-home:                  # ~/.nuget for fdrop-http-client-dotnet: packages and NuGet settings

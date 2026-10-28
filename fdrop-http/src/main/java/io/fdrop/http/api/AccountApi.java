@@ -79,6 +79,7 @@ public final class AccountApi {
         settings.put("userManagement", app.config.auth.userManagement.enabled);
         settings.put("forwarding", app.hostPolicy.enabled() && app.destinationService.secrets() != null);
         settings.put("sftpPort", app.config.sftp.enabled ? app.config.sftp.port : null);
+        settings.put("maxDestinationsPerFolder", app.config.forward.maxDestinationsPerFolder);
         m.put("settings", settings);
         return Response.json(m);
     }
@@ -219,6 +220,16 @@ public final class AccountApi {
                 || r.wentTo() == WentTo.FORWARD));
         m.put("canRetry", h.canRetry());
         m.put("jobId", h.jobId());
+        m.put("destinations", h.destinations().stream().map(d -> {
+            Map<String, Object> dm = new LinkedHashMap<>();
+            dm.put("jobId", d.jobId());
+            dm.put("destinationId", d.destinationId());
+            dm.put("destinationName", d.destinationName());
+            dm.put("state", d.state().name());
+            dm.put("error", d.error());
+            dm.put("sentAt", d.sentAt() == null ? null : Instant.ofEpochMilli(d.sentAt()).toString());
+            return dm;
+        }).toList());
         m.put("folderId", r.folderId());
         return m;
     }

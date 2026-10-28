@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * One upload through fdrop's resumable protocol (see "Resumable chunked uploads" in SPEC.md), hidden behind
+ * One upload through fdrop's resumable protocol (see "Resumable chunked uploads" in spec/resumable-uploads.md), hidden behind
  * {@link FdropClient#upload}: create a session, read the source one chunk at a time in the server's chunk size, send
  * up to {@code parallelChunks} at once (each retried on its own), then complete with the whole file's SHA-256 so the
  * server checks every byte arrived. Any failure discards the session, so nothing partial is left behind.
