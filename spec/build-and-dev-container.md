@@ -30,7 +30,7 @@ Maven is the top-level build for the whole project; npm builds the React UI and 
 - `fdrop-web` uses `frontend-maven-plugin` to install pinned Node and npm versions, then run `npm ci`, `npm test` and `npm run build`; output lands in `target/classes/static` and is packaged as a jar the server depends on.
 - `fdrop-server` builds the runnable fat jar with `maven-shade-plugin` (merging `META-INF/services` so `ServiceLoader` finds both storage backends). `fdrop-cli` builds its own shaded jar and release `.tar.gz`; it is not part of the server jar or image.
 - Unit tests run under Surefire; Testcontainers and SFTP integration tests run under Failsafe (`*IT.java`) in the `verify` phase.
-- The container image is built with Jib (`jib-maven-plugin`) as a standard OCI image, with no Containerfile and no container daemon: `jib:buildTar` writes an archive for `podman load`, and `jib:build` pushes straight to a registry. Jib's Docker-daemon goal (`jib:dockerBuild`) is not used.
+- The container image is built with Jib (`jib-maven-plugin`) as a standard OCI image, with no Containerfile and no container daemon: `jib:buildTar` writes an archive for `podman load`, and `jib:build` pushes straight to a registry, for the build machine's platform or, with `-Pall-platforms`, amd64 and arm64 (see "CPU architecture" below). Jib's Docker-daemon goal (`jib:dockerBuild`) is not used.
 
 ## Dev container
 
@@ -166,7 +166,8 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
       - ../deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro,z
   sftp-target:                       # destination for trying forward folders
-    image: docker.io/atmoz/sftp:alpine
+    image: localhost/fdrop-dev-sftp:1
+    build: { context: ./sftp-server, dockerfile: Containerfile }   # OpenSSH on Alpine, amd64 and arm64 alike
     command: "target::1001::inbox"   # no password: public-key login only
     environment:
       HOST_KEY: /etc/fdrop/certs/sftp-target_ssh_host_ed25519_key   # fixed, so a pinned host key survives recreating
@@ -177,7 +178,8 @@ services:
     depends_on:
       certs: { condition: service_completed_successfully }
   sftp-target2:                      # a second destination, for a forward folder sending to two servers
-    image: docker.io/atmoz/sftp:alpine
+    image: localhost/fdrop-dev-sftp:1
+    build: { context: ./sftp-server, dockerfile: Containerfile }
     command: "target::1001::inbox"
     environment:
       HOST_KEY: /etc/fdrop/certs/sftp-target2_ssh_host_ed25519_key
@@ -224,6 +226,54 @@ Measured on a macOS Podman machine (Fedora CoreOS 44, SELinux enforcing), with a
 On Ubuntu and Debian there is no SELinux, so `label=disable` makes no difference there and rootless works through `keep-id` alone (expected; not yet measured).
 
 A machine created with `--rootful` can be switched back with `podman machine stop`, `podman machine set --rootful=false` and `podman machine start`. Rootful and rootless Podman keep separate images, containers and volumes, so the dev stack then starts with fresh volumes (dev database, Maven and NuGet caches).
+
+### CPU architecture: Linux and Apple silicon
+
+The dev container, `mvn verify` and the `kind` deployment must work, and give the same results, on:
+
+| Host | Containers run as |
+| --- | --- |
+| Linux, x86-64 | `linux/amd64`, natively |
+| Linux, ARM64 | `linux/arm64`, natively |
+| macOS on Apple silicon (M-series) | `linux/arm64`, natively, in the Podman machine's ARM64 VM |
+| macOS on Intel | `linux/amd64`, natively, in the Podman machine's x86-64 VM |
+
+Each container must run as the host's own architecture. Emulation is not relied on. The Podman machine on Apple silicon can run `linux/amd64` images through qemu's user-mode emulation, but that emulation lacks system calls some programs need. Garage's amd64 image, for one, exits on start with `Cannot open LMDB database: Function not implemented (os error 38)`.
+
+**Rules:**
+
+- Every image the build, its tests, the dev stack and `fdrop-kubernetes` use publishes both `linux/amd64` and `linux/arm64`. A multi-platform tag lets Podman pull the host's own architecture.
+- An image pinned by digest is pinned to the digest of its **multi-platform index** (an OCI image index, or a Docker manifest list), never to the digest of one platform's image. A platform digest makes every host pull that one architecture.
+- To find the index digest: `skopeo inspect --raw docker://<image>:<tag> | sha256sum`. `podman manifest inspect <image>@sha256:<digest>` must list both architectures.
+- The same pin is used everywhere the image appears. `GarageContainer.IMAGE` (the Garage tests) and `garage_image` in `fdrop-kubernetes/modules/objectstore` are kept equal.
+- The server image is built for the build machine's own platform by default (Jib's own default is `linux/amd64` alone). `fdrop-server` sets `jib.from.platforms` to `linux/amd64`, and its `arm64-host` profile, activated by `os.arch` `aarch64`, sets `linux/arm64`. A tar holds only one platform, so `jib:buildTar`, `podman load` and the `kind` deployment then run fdrop natively, with no flags.
+- A release pushes both platforms as one multi-platform image: `./mvnw -pl fdrop-server -am -Pall-platforms package jib:build`. The distroless Java 21 base publishes both.
+
+**Images** (checked October 2026):
+
+| Image | Used by | Pin | `linux/arm64` |
+| --- | --- | --- | --- |
+| `dxflrs/garage:v2.5.0` | Garage tests; `modules/objectstore` | index `sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5` | yes |
+| `ghostunnel/ghostunnel:v1.11.5-distroless` | `modules/objectstore` | index digest | yes |
+| `curlimages/curl:8.23.0` | `modules/objectstore` | index digest | yes |
+| `localstack/localstack:4.9` | S3 tests | tag | yes |
+| `library/postgres:17-alpine` | `PostgresTlsIT`; dev stack | tag | yes |
+| `testcontainers/ryuk` | Testcontainers | Testcontainers' own | yes |
+| `devcontainers/java:21`, `alpine:3.22`, `pause:3.10`, `keycloak:26.4`, `prometheus:v3.5.0` | dev stack | tag | yes |
+| `fdrop-dev-sftp:1`, built from `alpine:3.22` | dev stack (`sftp-target`, `sftp-target2`) | built locally | yes, built for the host |
+| `library/maven:3.9-eclipse-temurin-21` | `scripts/podman-mvn.sh` | tag | yes |
+| `distroless/java21-debian12:nonroot` | the server image's base | tag | yes |
+
+Three images were changed to meet these rules:
+
+- **Garage was pinned to its amd64 image** (`sha256:23b16d34…`), not its index, so on Apple silicon `GarageStorageContractIT` and `GarageEncryptedContractIT` failed and `mvn verify` with them. It is now pinned to the index digest above, in both places.
+- **`atmoz/sftp`, used for the SFTP targets before, is amd64 only,** in every tag (`alpine`, `debian`, `latest`). OpenSSH ran under emulation, which the rules above don't allow. The SFTP targets are now built by Compose from `.devcontainer/sftp-server/Containerfile` as `localhost/fdrop-dev-sftp:1`. It is not in `sftp-target/` or `sftp-target2/`, because every file in those folders is read as a key.
+  - `FROM docker.io/library/alpine:3.22` (both platforms), plus `openssh-server` and `bash`.
+  - It takes atmoz/sftp's interface, so the services are otherwise unchanged: the user as `target::1001::inbox` (no password), keys in `~/.ssh/keys`, scripts in `/etc/sftp.d` run before `sshd` starts (`sftp-target-setup.sh`, which installs the `HOST_KEY` host key and the keys).
+  - `sshd` allows public keys only and SFTP only (`ForceCommand internal-sftp`), chrooted to the user's home.
+- **The server image was `linux/amd64` only,** Jib's default. It is now built for the host, or both platforms (above).
+
+**Check:** `scripts/check-image-platforms.sh` finds every fully qualified image reference in the repo's tracked files (compose files, `*.tf`, poms, scripts, and the test classes' image constants, with Java's `"…" + "…"` joined). Dev container features and example placeholders are left out. It fails if an image is a single platform's image, if a digest pin is not a multi-platform index, or if the index lacks `linux/amd64` or `linux/arm64`. Given image names as arguments, it checks just those. It uses `podman` (or `docker`) and needs registry access, so it is not part of `mvn verify`: run it whenever an image is added or changed, and in CI once there is one.
 
 ## Dev realm
 

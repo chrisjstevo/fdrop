@@ -1,0 +1,11 @@
+# The dev SFTP destinations (sftp-target, sftp-target2): OpenSSH's internal-sftp on Alpine, for linux/amd64 and
+# linux/arm64 alike (atmoz/sftp, used before, is amd64 only; see "CPU architecture" in spec/build-and-dev-container.md).
+# Takes atmoz/sftp's interface: the user as "name::uid::dirs", public keys in ~/.ssh/keys, scripts in /etc/sftp.d.
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache bash openssh-server \
+ && mkdir -p /etc/sftp.d \
+ && rm -f /etc/ssh/ssh_host_*
+COPY sshd_config /etc/ssh/sshd_config
+COPY entrypoint.sh /entrypoint.sh
+EXPOSE 22
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]

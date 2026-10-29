@@ -76,7 +76,8 @@ services:
     depends_on:
       certs: { condition: service_completed_successfully }
   sftp-target:                       # destination for trying forward folders
-    image: docker.io/atmoz/sftp:alpine
+    image: localhost/fdrop-dev-sftp:1
+    build: { context: ./sftp-server, dockerfile: Containerfile }   # OpenSSH on Alpine, amd64 and arm64 alike
     command: "target::1001::inbox"   # no password: public-key login only
     environment:
       HOST_KEY: /etc/fdrop/certs/sftp-target_ssh_host_ed25519_key   # fixed, so a pinned host key survives recreating
@@ -87,7 +88,8 @@ services:
     depends_on:
       certs: { condition: service_completed_successfully }
   sftp-target2:                      # a second destination, for a forward folder sending to two servers
-    image: docker.io/atmoz/sftp:alpine
+    image: localhost/fdrop-dev-sftp:1
+    build: { context: ./sftp-server, dockerfile: Containerfile }
     command: "target::1001::inbox"
     environment:
       HOST_KEY: /etc/fdrop/certs/sftp-target2_ssh_host_ed25519_key

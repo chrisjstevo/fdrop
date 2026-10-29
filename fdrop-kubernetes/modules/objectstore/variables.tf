@@ -38,9 +38,9 @@ variable "meta_size" {
 }
 
 variable "image" {
-  description = "Garage, pinned by digest. Keep in step with fdrop-storage-s3's GarageContainer."
+  description = "Garage, pinned by the digest of its multi-platform index (amd64 and arm64). Keep in step with fdrop-storage-s3's GarageContainer."
   type        = string
-  default     = "docker.io/dxflrs/garage:v2.5.0@sha256:23b16d34e0348d9aca9b960a7429a7e6d494974b5288bfb8f6c3ab856895f71e"
+  default     = "docker.io/dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5"
 }
 
 variable "setup_image" {

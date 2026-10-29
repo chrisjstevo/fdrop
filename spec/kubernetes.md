@@ -106,7 +106,7 @@ Installed with the `helm` and `kubernetes` providers at pinned chart versions, e
 
 fdrop's files are stored through its S3 backend in an S3-compatible object store that runs in the cluster and keeps its data on the nodes' local disks. No cloud object storage is needed.
 
-- **Garage.** The store is [Garage](https://garagehq.deuxfleurs.fr/): a single small binary built for self-hosted S3 on local disks, with replication across nodes and zones. MinIO is not used because it no longer publishes container images. Garage is AGPL-3.0, and runs here unmodified as its own service that fdrop only talks to over the S3 API, so fdrop's licence is unaffected. The image is pinned by digest.
+- **Garage.** The store is [Garage](https://garagehq.deuxfleurs.fr/): a single small binary built for self-hosted S3 on local disks, with replication across nodes and zones. MinIO is not used because it no longer publishes container images. Garage is AGPL-3.0, and runs here unmodified as its own service that fdrop only talks to over the S3 API, so fdrop's licence is unaffected. The image is pinned by the digest of its multi-platform index, so x86-64 and ARM64 nodes (and `kind` on Apple silicon) each pull their own (see "CPU architecture" in [build-and-dev-container.md](build-and-dev-container.md#cpu-architecture-linux-and-apple-silicon)).
 - **On local disk.**
   - A StatefulSet with two `ReadWriteOnce` volumes per pod, `data` and `meta` (Garage keeps its metadata database apart, preferably on faster disk).
   - The volumes come from a storage class for node-local disks, chosen by variable:

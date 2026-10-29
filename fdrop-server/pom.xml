@@ -15,6 +15,9 @@
 
   <properties>
     <image.name>fdrop</image.name>
+    <!-- The image is built for the build machine's own platform (the profiles below), as jib:buildTar can hold only
+         one and kind and podman load then run it natively. -Pall-platforms makes jib:build push amd64 and arm64. -->
+    <jib.from.platforms>linux/amd64</jib.from.platforms>
   </properties>
 
   <dependencies>
@@ -147,4 +150,22 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>arm64-host</id>
+      <activation>
+        <os><arch>aarch64</arch></os>
+      </activation>
+      <properties>
+        <jib.from.platforms>linux/arm64</jib.from.platforms>
+      </properties>
+    </profile>
+    <profile>
+      <id>all-platforms</id>
+      <properties>
+        <jib.from.platforms>linux/amd64,linux/arm64</jib.from.platforms>
+      </properties>
+    </profile>
+  </profiles>
 </project>

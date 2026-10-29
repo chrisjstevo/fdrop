@@ -25,9 +25,12 @@ import java.util.regex.Pattern;
  */
 final class GarageContainer extends GenericContainer<GarageContainer> {
 
-    /** Keep in step with fdrop-kubernetes/modules/objectstore (garage_image). */
+    /**
+     * The multi-platform index, so arm64 hosts get arm64 (see "CPU architecture" in spec/build-and-dev-container.md).
+     * Keep in step with fdrop-kubernetes/modules/objectstore (garage_image).
+     */
     static final String IMAGE = "docker.io/dxflrs/garage:v2.5.0@sha256:"
-            + "23b16d34e0348d9aca9b960a7429a7e6d494974b5288bfb8f6c3ab856895f71e";
+            + "677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5";
     private static final String ADMIN_TOKEN = "garage-test-admin-token";
     private static final String CONFIG = """
             metadata_dir = "/var/lib/garage/meta"
