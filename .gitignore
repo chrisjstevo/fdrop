@@ -12,6 +12,8 @@ node_modules/
 .devcontainer/sftp-target2/authorized_keys
 # never commit real configuration
 fdrop.yaml
+# the Podman socket path for the dev container, written by scripts/podman-socket-env.sh
+.devcontainer/.env
 # dev certificates, created by scripts/dev-certs.sh when the Compose stacks start
 .devcontainer/certs/
 deploy/compose/certs/

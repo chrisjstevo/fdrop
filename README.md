@@ -35,7 +35,9 @@ Quadlet unit and a local demo Compose file.
 The supported environment is the dev container (`.devcontainer/`), run with Podman 5 and `podman-compose`. In VS
 Code set `dev.containers.dockerPath` to `podman` and `dev.containers.dockerComposePath` to `podman-compose`, then
 "Reopen in Container". IntelliJ IDEA works too: set its Docker connection to Podman (on macOS and Windows, the
-machine's rootful connection, `podman-machine-default-root`) and Docker Compose to a `docker-compose` v2 binary. It
+machine's default rootless connection, `podman-machine-default`) and Docker Compose to a `docker-compose` v2 binary.
+Podman must run rootless; [Podman on macOS and Linux](spec/build-and-dev-container.md#podman-on-macos-and-linux)
+explains why and how the platforms differ. It
 starts Keycloak (with the dev realm), Prometheus and a throwaway SFTP destination beside the workspace.
 
 ```bash
@@ -114,10 +116,12 @@ scripts/podman-mvn.sh verify
 ### Running with Podman from the command line
 
 You need Podman 5 and a Compose provider: `podman compose` runs whichever of `podman-compose` or `docker-compose`
-(v2) is installed. On macOS and Windows, use a rootful Podman machine:
+(v2) is installed. Podman runs rootless (see
+[Podman on macOS and Linux](spec/build-and-dev-container.md#podman-on-macos-and-linux)). On macOS and Windows, create a
+Podman machine, which is rootless by default:
 
 ```bash
-podman machine init --rootful
+podman machine init
 ```
 
 ```bash
@@ -182,7 +186,12 @@ container.
 [.devcontainer/compose.host-ports.yaml](.devcontainer/compose.host-ports.yaml) publishes their ports on the host,
 which an IDE would otherwise do. `-p fdrop-dev` keeps this stack apart from an IDE's.
 
-1. Start the stack. The `certs` step creates the dev certificates in `.devcontainer/certs/` first:
+1. Tell the stack where Podman's API socket is (an IDE does this itself, through `initializeCommand`), then start
+   it. The `certs` step creates the dev certificates in `.devcontainer/certs/` first:
+
+   ```bash
+   sh scripts/podman-socket-env.sh
+   ```
 
    ```bash
    podman compose -p fdrop-dev -f .devcontainer/compose.yaml -f .devcontainer/compose.host-ports.yaml up -d

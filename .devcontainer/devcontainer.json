@@ -1,5 +1,6 @@
 {
   "name": "fdrop",
+  "initializeCommand": "sh \"${localWorkspaceFolder}/scripts/podman-socket-env.sh\"",
   "dockerComposeFile": "compose.yaml",
   "service": "dev",
   "runServices": ["certs", "localhost", "dev", "keycloak", "postgres", "sftp-target", "sftp-target2", "prometheus"],

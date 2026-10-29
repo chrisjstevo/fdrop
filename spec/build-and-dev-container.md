@@ -106,6 +106,8 @@ services:
     command: sleep infinity
     network_mode: service:localhost
     userns_mode: keep-id             # rootless Podman: workspace files keep the host user's ownership
+    security_opt:
+      - label=disable                # SELinux (the Podman machine, Fedora, RHEL) otherwise blocks the Podman socket mounted below
     environment:
       JAVA_HOME: /usr/lib/jvm/msopenjdk-current                # the image's JDK; the java feature (version none, for Maven) points it at an SDKMAN JDK that isn't there
       DOCKER_HOST: unix:///var/run/docker.sock                  # Testcontainers uses Podman's Docker-compatible API
@@ -190,6 +192,38 @@ volumes:
   fdrop-nuget-home:                  # ~/.nuget for fdrop-http-client-dotnet: packages and NuGet settings
   fdrop-pgdata:                      # the dev metadata DB, kept across container rebuilds
 ```
+
+### Podman on macOS and Linux
+
+The dev container runs under **rootless** Podman on every platform: Podman runs as your own user, and so does the dev container's `vscode` user (through `keep-id`). Rootful Podman is not used and does not work for the dev container. What differs between platforms is where Podman runs and whether SELinux is enforcing.
+
+| | macOS and Windows | Linux |
+| --- | --- | --- |
+| Where Podman runs | In a Podman machine: a Fedora CoreOS VM that `podman machine` manages. Containers, images and volumes live inside it, and Podman forwards its API to the host | Directly on the host |
+| Setup | `podman machine init` (rootless by default), then `podman machine start` | `systemctl --user enable --now podman.socket` |
+| API socket the dev container mounts | `/run/user/<uid>/podman/podman.sock`, a path inside the VM | `$XDG_RUNTIME_DIR/podman/podman.sock` |
+| SELinux | Enforcing (Fedora CoreOS) | Enforcing on Fedora and RHEL; not used on Ubuntu or Debian (AppArmor) |
+| IDE Docker connection | The machine's default connection, `podman-machine-default` | Your user's Podman socket |
+
+`initializeCommand` (`scripts/podman-socket-env.sh`) finds the socket on both, so nothing is set by hand.
+
+**Why rootless, and why not rootful.** The dev container mounts Podman's API socket so that Testcontainers, running in it, can start the integration tests' containers. Two things decide whether it can use that socket:
+
+- **File permissions.** The rootless socket is owned by your user and group, mode 660. `keep-id` maps your user and group ids to the same numbers in the container, and the image's `vscode` user is uid and gid 1000: that is the Podman machine user's group (`core`, uid 501, gid 1000) and, on most Linux desktops, your own user (uid and gid 1000), so `vscode` can open the socket. A Linux user with other ids needs `userns_mode: keep-id:uid=1000,gid=1000`, which maps their own ids onto `vscode`'s. The rootful socket (`/run/podman/podman.sock`) is owned by `root:root`, mode 660, so `vscode`, which is not root, cannot open it whatever else is configured. Making it work under rootful Podman would mean running the dev container's user as root, which dev containers are designed not to do, and rootful Podman also gives every container root on the host or VM.
+- **SELinux.** Where SELinux enforces, a container's processes (type `container_t`) may not connect to the Podman socket: the rootless socket is labelled `user_tmp_t` and the rootful one `var_run_t`, and both are refused. Rootful Podman does not change this. The `dev` service therefore sets `security_opt: label=disable`, which runs that one container without SELinux confinement, the same setting `scripts/podman-mvn.sh` uses for its build container. The services beside it (Keycloak, PostgreSQL, the SFTP targets, Prometheus) stay confined. This loses little: a container that holds the Podman API socket can already start any container it likes, so SELinux confinement of `dev` itself would not contain it.
+
+Measured on a macOS Podman machine (Fedora CoreOS 44, SELinux enforcing), with a container mounting the socket and calling the API's `/_ping`:
+
+| Podman | Container user | SELinux labelling | Result |
+| --- | --- | --- | --- |
+| Rootless, `keep-id` | root | on | refused |
+| Rootless, `keep-id` | uid 1000 (`vscode`) | off (`label=disable`) | works |
+| Rootful | non-root | on | refused |
+| Rootful | non-root | off | refused (the socket is `root:root` 660) |
+
+On Ubuntu and Debian there is no SELinux, so `label=disable` makes no difference there and rootless works through `keep-id` alone (expected; not yet measured).
+
+A machine created with `--rootful` can be switched back with `podman machine stop`, `podman machine set --rootful=false` and `podman machine start`. Rootful and rootless Podman keep separate images, containers and volumes, so the dev stack then starts with fresh volumes (dev database, Maven and NuGet caches).
 
 ## Dev realm
 
@@ -281,10 +315,10 @@ volumes:
 }
 ```
 
-- **Host setup.** Install Podman 5 and `podman-compose`. On macOS and Windows, create a rootful Podman machine (`podman machine init --rootful`, then `podman machine start`); on Linux, enable the API socket with `systemctl --user enable --now podman.socket`. For IntelliJ, also install Docker Compose v2 (Ubuntu: `docker-compose-v2`, without `docker.io`), which `podman compose` then prefers: IntelliJ adds its own long-syntax bind mount at the workspace folder, and only Docker Compose merges it with the compose file's mount (podman-compose passes both, and Podman rejects the duplicate mount destination). On rootless Linux, set `PODMAN_SOCKET` where the IDE will see it, such as `~/.config/environment.d/` (then log in again), and keep it out of `podman.service` with a drop-in containing `UnsetEnvironment=PODMAN_SOCKET`: Podman reads that variable as its API endpoint and won't start with a plain path.
+- **Host setup.** Install Podman 5 and `podman-compose`, and run Podman rootless (see Podman on macOS and Linux above). On macOS and Windows, create a Podman machine with `podman machine init` (rootless is the default; don't pass `--rootful`), then `podman machine start`. On Linux, enable your user's API socket with `systemctl --user enable --now podman.socket`. For IntelliJ, also install Docker Compose v2 (Ubuntu: `docker-compose-v2`, without `docker.io`), which `podman compose` then prefers: IntelliJ adds its own long-syntax bind mount at the workspace folder, and only Docker Compose merges it with the compose file's mount (podman-compose passes both, and Podman rejects the duplicate mount destination). Nothing needs `PODMAN_SOCKET` set by hand: `initializeCommand` finds the socket (see Testcontainers).
 - **VS Code.** Set `dev.containers.dockerPath` to `podman` and `dev.containers.dockerComposePath` to `podman-compose` in user settings, so Dev Containers drives Podman. These are user settings, not committed to the repo.
-- **Testcontainers.** The integration tests start MinIO, LocalStack, OpenSSH, Keycloak and PostgreSQL through the host's Podman API socket, mounted into the dev container as `/var/run/docker.sock`; Podman serves the Docker-compatible API there, so Testcontainers needs no Docker. `PODMAN_SOCKET` defaults to `/run/podman/podman.sock` (right for a rootful Podman machine); on rootless Linux set it to `$XDG_RUNTIME_DIR/podman/podman.sock`. Ryuk, Testcontainers' clean-up container, runs privileged so it can reach the socket. The containers a test starts run beside the dev container, not inside it, so their published ports are on the host: `TESTCONTAINERS_HOST_OVERRIDE=host.containers.internal` (the name Podman gives the host inside its containers) makes Testcontainers connect there instead of to the dev container's own `localhost`, where nothing listens and every such test used to be skipped.
-- **Rootless and SELinux.** `userns_mode: keep-id` keeps workspace files owned by the host user, so `updateRemoteUserUID` is off; bind mounts carry `:z` so they work on SELinux hosts such as Fedora and RHEL, and the label is ignored elsewhere.
+- **Testcontainers.** The integration tests start MinIO, LocalStack, OpenSSH, Keycloak and PostgreSQL through the host's Podman API socket, mounted into the dev container as `/var/run/docker.sock`; Podman serves the Docker-compatible API there, so Testcontainers needs no Docker. `devcontainer.json`'s `initializeCommand` runs `scripts/podman-socket-env.sh` on the host before Compose starts: it asks Podman for its socket (`podman info`, `Host.RemoteSocket.Path`) and writes `PODMAN_SOCKET` to the git-ignored `.devcontainer/.env`, which Docker Compose and podman-compose read, so a rootless Podman machine (`/run/user/<uid>/podman/podman.sock` inside the machine) and rootless Linux (`$XDG_RUNTIME_DIR/podman/podman.sock`) work without setting anything by hand. Without it, `PODMAN_SOCKET` defaults to `/run/podman/podman.sock`, which only a rootful Podman has; on a rootless one Podman then fails to create that path (`mkdir /run/podman/podman.sock: permission denied`). A `PODMAN_SOCKET` already set in the environment wins. Ryuk, Testcontainers' clean-up container, runs privileged so it can reach the socket. The containers a test starts run beside the dev container, not inside it, so their published ports are on the host: `TESTCONTAINERS_HOST_OVERRIDE=host.containers.internal` (the name Podman gives the host inside its containers) makes Testcontainers connect there instead of to the dev container's own `localhost`, where nothing listens and every such test used to be skipped.
+- **Rootless and SELinux.** `userns_mode: keep-id` keeps workspace files owned by the host user, so `updateRemoteUserUID` is off; bind mounts carry `:z` so they work on SELinux hosts such as Fedora and RHEL, and the label is ignored elsewhere. The `dev` service alone also has `security_opt: label=disable`, so it can use the Podman socket; see Podman on macOS and Linux.
 - **Image names** are fully qualified (`docker.io/atmoz/sftp`, `quay.io/keycloak/keycloak`), because Podman does not assume Docker Hub for short names.
 - Prometheus runs beside the dev container at `http://localhost:9090`, scraping `https://localhost:8081/metrics` every 15 s (trusting the dev CA in `.devcontainer/certs/ca.crt`) with the same alert rules as production (`deploy/prometheus/alerts.yml`), so new metrics and alerts can be tried locally. The dev config sets no metrics token.
 - The named `.m2` volume keeps the Maven cache across container rebuilds.
@@ -297,7 +331,7 @@ volumes:
 - The .NET 10 SDK is installed (the `dotnet` feature) for `fdrop-http-client-dotnet`, so `./mvnw verify` builds and tests the .NET client in the dev container and in CI like everything else. `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1` are set in `remoteEnv`, and `~/.nuget` is a named volume (`fdrop-nuget-home`) like the Maven cache. The volume covers all of `~/.nuget`, not just `packages/`: NuGet also writes `~/.nuget/NuGet/NuGet.Config` there, and a volume mounted below `~/.nuget` leaves the folder above it owned by root, so restore fails with "Access to the path '/home/vscode/.nuget/NuGet' is denied". `postCreateCommand` gives the new volume to `vscode`, as it does `.m2`.
 - Node 22 and npm are installed so developers can run `npm run dev` and `npm test` in `fdrop-web` directly; the Maven build still pins its own Node and npm through `frontend-maven-plugin`, and both must use the same major version.
 - The dev container, Keycloak and Prometheus share one network namespace, owned by the `localhost` service (a pause container), so `https://localhost:8180/realms/fdrop` is the same issuer for the browser (through the forwarded port) and for the fdrop server. Without this, tokens issued to the browser would fail the server's `iss` check. The namespace belongs to `localhost` rather than `dev` because Podman refuses to remove a container others share: with it, the dev container can be recreated (IntelliJ IDEA does so each time it opens the project) without touching the services beside it.
-- **IntelliJ IDEA** opens the same `devcontainer.json`. Set its Docker connection to Podman, with the Podman machine's rootful connection (`podman-machine-default-root`) on macOS and Windows so the images it builds and the containers `docker-compose` starts share one store, and Docker Compose to a `docker-compose` v2 binary.
+- **IntelliJ IDEA** opens the same `devcontainer.json`. Set its Docker connection to Podman, using the Podman machine's default rootless connection (`podman-machine-default`, not `podman-machine-default-root`) on macOS and Windows, so the images it builds and the containers `docker-compose` starts share the same rootless store, and Docker Compose to a `docker-compose` v2 binary.
 - Default user: **admin / admin** in the `fdrop` realm, with `fdrop-user` and `fdrop-admin`. The Keycloak admin console (master realm, `https://localhost:8180/admin`) also uses admin / admin. Two standard (non-admin) users, **jugash / jugash** and **chris / chris**, hold only `fdrop-user`, so sharing, destination assignments and permission checks can be tried with more than one account. Further users are created from fdrop's admin screen.
 - **app-demo / app-demo** is an application account in `fdrop-applications`, for trying password login (`curl --cacert .devcontainer/certs/ca.crt -u app-demo:app-demo https://localhost:8443/api/v1/me`, `sftp -P 2222 app-demo@localhost`) and for adding an application to shared and forward folders. The dev config enables the mTLS listener on 8444 with the dev CA, so `curl --cert` or the CLI can try certificate login with the generated `app-demo` certificate once an admin registers its subject or SAN on `app-demo`:
   ```bash
