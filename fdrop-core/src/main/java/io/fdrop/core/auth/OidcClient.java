@@ -266,9 +266,21 @@ public class OidcClient {
         }
         Principal p = principal(claims);
         Object acr = claims.getClaim("acr");
-        // Keycloak names service-account users service-account-<client id>; they stand for scripts, not people
-        boolean service = p.username() != null && p.username().startsWith("service-account-");
-        return new Bearer(p, acr == null ? null : acr.toString(), service);
+        return new Bearer(p, acr == null ? null : acr.toString(), serviceAccount(claims, p.username()));
+    }
+
+    /**
+     * Whether a token is a client-credentials token, which stands for a script rather than a person. Keycloak names
+     * the service-account user {@code service-account-<client id>}, puts that client in {@code client_id}, and opens
+     * no user session ({@code sid}). The name alone is not enough: a person can be given a name like that.
+     */
+    static boolean serviceAccount(JWTClaimsSet claims, String username) {
+        String prefix = "service-account-";
+        if (username == null || !username.startsWith(prefix) || claims.getClaim("sid") != null) {
+            return false;
+        }
+        Object clientId = claims.getClaim("client_id");
+        return clientId != null && username.equals(prefix + clientId.toString().toLowerCase(java.util.Locale.ROOT));
     }
 
     public JWTClaimsSet verifyAccessToken(String jwt) {

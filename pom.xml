@@ -44,6 +44,10 @@
     <h2.version>2.5.252</h2.version>
     <postgresql.version>42.7.14</postgresql.version>
     <jackson.version>2.22.4</jackson.version>
+    <!-- Jackson 3, brought in by logstash-logback-encoder; pinned past its CVEs -->
+    <jackson3.version>3.2.4</jackson3.version>
+    <!-- log4j-api, brought in by Tika's POI; pinned past CVE-2026-49844 -->
+    <log4j.version>2.26.1</log4j.version>
     <slf4j.version>2.0.20</slf4j.version>
     <logback.version>1.6.5</logback.version>
     <logstash-encoder.version>9.0</logstash-encoder.version>
@@ -93,6 +97,20 @@
         <groupId>com.fasterxml.jackson</groupId>
         <artifactId>jackson-bom</artifactId>
         <version>${jackson.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>tools.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson3.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-bom</artifactId>
+        <version>${log4j.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>

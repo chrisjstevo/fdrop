@@ -52,7 +52,7 @@ services:
     depends_on:
       certs: { condition: service_completed_successfully }
   keycloak:
-    image: quay.io/keycloak/keycloak:26.4
+    image: quay.io/keycloak/keycloak:26.8.1
     command: ["start-dev", "--import-realm", "--http-enabled=false", "--https-port=8180", "--https-certificate-file=/etc/fdrop/certs/server.crt", "--https-certificate-key-file=/etc/fdrop/certs/server.key"]   # HTTPS only, with the dev localhost certificate
     network_mode: service:localhost  # shares localhost with the dev container
     environment:

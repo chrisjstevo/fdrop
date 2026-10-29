@@ -144,7 +144,7 @@ services:
     depends_on:
       certs: { condition: service_completed_successfully }
   keycloak:
-    image: quay.io/keycloak/keycloak:26.4
+    image: quay.io/keycloak/keycloak:26.8.1
     command: ["start-dev", "--import-realm", "--http-enabled=false", "--https-port=8180",
               "--https-certificate-file=/etc/fdrop/certs/server.crt", "--https-certificate-key-file=/etc/fdrop/certs/server.key"]
     network_mode: service:localhost  # shares localhost with the dev container
@@ -259,7 +259,7 @@ Each container must run as the host's own architecture. Emulation is not relied 
 | `localstack/localstack:4.9` | S3 tests | tag | yes |
 | `library/postgres:17-alpine` | `PostgresTlsIT`; dev stack | tag | yes |
 | `testcontainers/ryuk` | Testcontainers | Testcontainers' own | yes |
-| `devcontainers/java:21`, `alpine:3.22`, `pause:3.10`, `keycloak:26.4`, `prometheus:v3.5.0` | dev stack | tag | yes |
+| `devcontainers/java:21`, `alpine:3.22`, `pause:3.10`, `keycloak:26.8.1`, `prometheus:v3.5.0` | dev stack | tag | yes |
 | `fdrop-dev-sftp:1`, built from `alpine:3.22` | dev stack (`sftp-target`, `sftp-target2`) | built locally | yes, built for the host |
 | `library/maven:3.9-eclipse-temurin-21` | `scripts/podman-mvn.sh` | tag | yes |
 | `distroless/java21-debian12:nonroot` | the server image's base | tag | yes |
