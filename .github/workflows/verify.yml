@@ -1,5 +1,6 @@
-# Runs ./mvnw verify on every push and pull request, inside the same dev container developers use: the Dev
-# Containers CLI brings up .devcontainer/ with rootless Podman and podman-compose, so local and CI builds match.
+# Runs ./mvnw verify on every push and pull request, directly on the runner: Java 21 and the .NET SDK from
+# global.json are installed here, the build fetches its own Node (frontend-maven-plugin) and OpenTofu
+# (fdrop-kubernetes/check.sh), and the Testcontainers integration tests use the runner's Docker.
 name: verify
 
 on:
@@ -15,50 +16,30 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  DEVCONTAINER_CLI_VERSION: 0.90.0
-  PODMAN_COMPOSE_VERSION: 1.6.0
-
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
 
-      - name: Install the Dev Containers CLI and podman-compose
-        run: |
-          npm install -g "@devcontainers/cli@${DEVCONTAINER_CLI_VERSION}"
-          pipx install "podman-compose==${PODMAN_COMPOSE_VERSION}"
-          podman version
-          podman-compose version
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad   # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
 
-      - name: Start the Podman API socket
-        run: |
-          # Ubuntu 24.04 limits unprivileged user namespaces through AppArmor, which rootless Podman needs
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
-          mkdir -p "$(dirname "$socket")"
-          nohup podman system service --time=0 "unix://$socket" > "$RUNNER_TEMP/podman-service.log" 2>&1 &
-          for _ in $(seq 1 30); do [ -S "$socket" ] && break; sleep 1; done
-          test -S "$socket"
-          # read by scripts/podman-socket-env.sh, the dev container's initializeCommand
-          echo "PODMAN_SOCKET=$socket" >> "$GITHUB_ENV"
-
-      - name: Let the dev container write to the checkout
-        # the dev container runs as vscode (uid 1000) and keep-id leaves the files owned by the runner (uid 1001)
-        run: chmod -R a+rwX .
-
-      - name: Start the dev container
-        run: >-
-          devcontainer up --workspace-folder .
-          --docker-path podman --docker-compose-path podman-compose
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
+        with:
+          global-json-file: fdrop-http-client-dotnet/global.json
+          cache: true
+          cache-dependency-path: fdrop-http-client-dotnet/**/packages.lock.json
 
       - name: mvn verify
-        run: >-
-          devcontainer exec --workspace-folder .
-          --docker-path podman --docker-compose-path podman-compose
-          ./mvnw -B -ntp verify
+        run: ./mvnw -B -ntp verify
 
       - name: Keep the test reports
         if: failure()
@@ -70,10 +51,3 @@ jobs:
             **/target/failsafe-reports/
             fdrop-http-client-dotnet/target/**/*.trx
           if-no-files-found: ignore
-
-      - name: Show the dev stack's logs
-        if: failure()
-        run: |
-          podman ps -a
-          cat "$RUNNER_TEMP/podman-service.log" || true
-          for c in $(podman ps -a --format '{{.Names}}'); do echo "::group::$c"; podman logs --tail 200 "$c" || true; echo "::endgroup::"; done

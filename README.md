@@ -106,10 +106,10 @@ certificate, and proxies the API to fdrop on 8443 (start fdrop with
 
 ### Continuous integration
 
-`.github/workflows/verify.yml` runs `./mvnw verify` on every push to any branch and on every pull request. It starts
-this same dev container on an Ubuntu runner with the Dev Containers CLI, rootless Podman and podman-compose, so a
-build that passes here passes there. When it fails, the run keeps the Surefire, Failsafe and .NET test reports as
-the `test-reports` artifact and prints the dev stack's container logs.
+`.github/workflows/verify.yml` runs `./mvnw verify` on every push to any branch and on every pull request,
+directly on an Ubuntu runner with Java 21, the .NET SDK from `global.json` and the runner's Docker for the
+Testcontainers integration tests. When it fails, the run keeps the Surefire, Failsafe and .NET test reports as the
+`test-reports` artifact.
 
 ### Without the dev container
 
