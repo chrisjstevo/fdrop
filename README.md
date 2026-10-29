@@ -104,6 +104,13 @@ For UI work, `cd fdrop-web && npm run dev` serves the UI on https://localhost:51
 certificate, and proxies the API to fdrop on 8443 (start fdrop with
 `FDROP_AUTH_OIDC_REDIRECTURI=https://localhost:5173/auth/callback`).
 
+### Continuous integration
+
+`.github/workflows/verify.yml` runs `./mvnw verify` on every push to any branch and on every pull request. It starts
+this same dev container on an Ubuntu runner with the Dev Containers CLI, rootless Podman and podman-compose, so a
+build that passes here passes there. When it fails, the run keeps the Surefire, Failsafe and .NET test reports as
+the `test-reports` artifact and prints the dev stack's container logs.
+
 ### Without the dev container
 
 If your machine has no JDK 21, `scripts/podman-mvn.sh` runs the same Maven build in a Java 21 container and passes
