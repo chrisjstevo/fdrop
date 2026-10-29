@@ -305,6 +305,18 @@ fdrop keeps the file. The folder's owner then sees **Retry** and **Stop sending*
 and choose **Retry** to deliver it, or **Stop sending** (with a reason, which is audited) to give up on Partner B
 for that file, which lets fdrop delete it.
 
+**6. Optional: browse a destination.** As admin, open **Partner A**, choose **Edit**, tick **Let forward folders
+browse this destination and retrieve its files**, and save. Then open the forward folder under **Forward**: a
+**Partner A** tab appears beside **In fdrop**, listing `/inbox` on `sftp-target` with each file marked **Sent by
+fdrop** or **Not from fdrop**. Put a file there as the partner would:
+
+```bash
+podman compose -p fdrop-dev -f .devcontainer/compose.yaml exec sftp-target sh -c 'echo hello > /home/target/inbox/from-partner.txt'
+```
+
+Choose **Refresh**, then **Get file** on `from-partner.txt`: fdrop copies it in, shows its progress, and downloads it.
+The copy stays in fdrop for 24 hours after the last download; nothing on the server is changed.
+
 ### Trying file expiry
 
 - In the browser, pick an **Expires** value above the drop zone before dropping files, or use **Set expiry…** on a

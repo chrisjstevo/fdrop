@@ -21,6 +21,7 @@ import io.fdrop.core.db.EncryptionRepo;
 import io.fdrop.core.db.ExpiryRepo;
 import io.fdrop.core.db.FolderRepo;
 import io.fdrop.core.db.RecordRepo;
+import io.fdrop.core.db.RetrievalRepo;
 import io.fdrop.core.db.SearchRepo;
 import io.fdrop.core.search.NoSearch;
 import io.fdrop.core.search.SearchService;
@@ -40,6 +41,7 @@ import io.fdrop.core.service.ForwardService;
 import io.fdrop.core.service.HostPolicy;
 import io.fdrop.core.service.Janitor;
 import io.fdrop.core.service.PathResolver;
+import io.fdrop.core.service.RemoteBrowseService;
 import io.fdrop.core.service.SshTools;
 import io.fdrop.core.service.UploadRecorder;
 import io.fdrop.core.service.UploadService;
@@ -84,6 +86,7 @@ public final class Fdrop implements AutoCloseable {
     public final FolderService folderService;
     public final ForwardService forwarding;
     public final DestinationService destinationService;
+    public final RemoteBrowseService browse;
     public final UserAdminService userAdmin;
     public final AccountService accounts;
     public final AppAccountService appAccounts;
@@ -145,6 +148,8 @@ public final class Fdrop implements AutoCloseable {
         this.hostPolicy = new HostPolicy(config.forward.allowedHosts);
         this.destinationService = new DestinationService(destinations, folders, users, records, ssh,
                 SecretBox.fromBase64(config.forward.encryptionKey), hostPolicy);
+        this.browse = new RemoteBrowseService(config, folders, destinations, destinationService, records,
+                new RetrievalRepo(db), users, storage, files, resolver, hostPolicy, metrics);
         this.userAdmin = new UserAdminService(config, keycloak, userStatus, twoFactor, users, folders, destinations,
                 uploads, records, storage, folderService, appAccountRepo, searchRepo);
         this.appAccounts = new AppAccountService(config, db, appAccountRepo, users, userAdmin, twoFactor, oidc,
@@ -205,6 +210,7 @@ public final class Fdrop implements AutoCloseable {
         expirySweeper.close();
         encryptionService.close();
         janitor.close();
+        browse.close();
         storage.close();
         auditStore.close();
         db.close();

@@ -9,7 +9,7 @@ export function Logo({ size = 32 }: { size?: number }) {
   return <img src={logoUrl} width={size} height={size} alt="" aria-hidden="true" className={s.logo} />;
 }
 
-type Variant = "primary" | "secondary" | "danger" | "ghost" | "onDark";
+type Variant = "primary" | "secondary" | "danger" | "ghost" | "onDark" | "ready";
 
 export function Button({
   variant = "secondary",

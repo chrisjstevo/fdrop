@@ -31,7 +31,15 @@ public final class DestinationService {
     /** The fields an admin edits. */
     public record DestinationInput(String name, String description, String host, Integer port, String remoteDir,
                                    String username, ServerAuth serverAuth, String hostKeySha256,
-                                   String hostCaPublicKey, Boolean overwrite, Boolean enabled) {
+                                   String hostCaPublicKey, Boolean overwrite, Boolean enabled, Boolean browsable) {
+
+        /** Without the Browsing setting, which stays as it is. */
+        public DestinationInput(String name, String description, String host, Integer port, String remoteDir,
+                                String username, ServerAuth serverAuth, String hostKeySha256, String hostCaPublicKey,
+                                Boolean overwrite, Boolean enabled) {
+            this(name, description, host, port, remoteDir, username, serverAuth, hostKeySha256, hostCaPublicKey,
+                    overwrite, enabled, null);
+        }
     }
 
     /** A client key without its private half. */
@@ -113,7 +121,7 @@ public final class DestinationService {
         requireAdmin(admin);
         requireSecrets();
         ForwardDestination d = validate(new ForwardDestination(Hashing.newId("dst"), null, null, null, 22, null, null,
-                ServerAuth.HOST_KEY, null, null, false, true, admin.sub(), System.currentTimeMillis(),
+                ServerAuth.HOST_KEY, null, null, false, true, false, admin.sub(), System.currentTimeMillis(),
                 System.currentTimeMillis()), in);
         repo.insert(d);
         newKey(d.id(), KeyState.ACTIVE);
@@ -131,7 +139,8 @@ public final class DestinationService {
                 records.pauseDestination(f.id(), id, !d.enabled());
             }
         }
-        Audit.log("destination.update", "user", admin.username(), "destination", id, "enabled", d.enabled());
+        Audit.log("destination.update", "user", admin.username(), "destination", id, "enabled", d.enabled(),
+                "browsable", d.browsable());
         return view(d);
     }
 
@@ -164,6 +173,7 @@ public final class DestinationService {
         String ca = in.hostCaPublicKey() != null ? in.hostCaPublicKey().strip() : base.hostCaPublicKey();
         boolean overwrite = in.overwrite() != null ? in.overwrite() : base.overwrite();
         boolean enabled = in.enabled() != null ? in.enabled() : base.enabled();
+        boolean browsable = in.browsable() != null ? in.browsable() : base.browsable();
         if (name == null || host == null || dir == null || username == null) {
             throw FdropException.badRequest("name, host, remote directory and username are required");
         }
@@ -185,7 +195,7 @@ public final class DestinationService {
             fp = null;
         }
         return new ForwardDestination(base.id(), name, desc, host, port, dir, username, auth, fp, ca, overwrite,
-                enabled, base.createdBy(), base.createdAt(), System.currentTimeMillis());
+                enabled, browsable, base.createdBy(), base.createdAt(), System.currentTimeMillis());
     }
 
     /** Connects to an unsaved host to learn its host key, before the admin pins it. */

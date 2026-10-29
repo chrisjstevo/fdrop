@@ -240,6 +240,23 @@ public final class FdropMetrics {
                 .register(registry).increment();
     }
 
+    /** A destination tab's listing of a remote directory, fetched from the destination (not from the cache). */
+    public void remoteList(String destination, boolean ok) {
+        Counter.builder("fdrop.forward.browse.listings")
+                .tags("destination", destination, "outcome", ok ? "ok" : "error").register(registry).increment();
+    }
+
+    /** A finished retrieval of a remote file: {@code outcome} is ok, present (a copy was reused) or error. */
+    public void remoteRetrieval(String destination, String outcome) {
+        Counter.builder("fdrop.forward.browse.retrievals").tags("destination", destination, "outcome", outcome)
+                .register(registry).increment();
+    }
+
+    public void remoteBytes(String destination, long bytes) {
+        Counter.builder("fdrop.forward.browse.retrieved").baseUnit("bytes").tags("destination", destination)
+                .register(registry).increment(bytes);
+    }
+
     public void keycloakCall(String operation, boolean ok, long nanos) {
         timer("fdrop.keycloak.request", "operation", operation, "outcome", ok ? "ok" : "error")
                 .record(nanos, TimeUnit.NANOSECONDS);

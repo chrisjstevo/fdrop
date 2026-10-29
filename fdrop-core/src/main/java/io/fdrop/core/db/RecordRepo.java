@@ -206,6 +206,12 @@ public final class RecordRepo {
                 + " LIMIT ?", RecordRepo::job, folderId, limit);
     }
 
+    /** Files a folder has sent to one destination, newest first: what its destination tab marks "Sent by fdrop". */
+    public List<ForwardJob> sentTo(String folderId, String destinationId, int limit) {
+        return db.query("SELECT * FROM forward_job WHERE folder_id = ? AND destination_id = ? AND state = 'SENT'"
+                + " ORDER BY sent_at DESC LIMIT ?", RecordRepo::job, folderId, destinationId, limit);
+    }
+
     /** Every job of one uploaded file: one per destination. */
     public List<ForwardJob> jobsForRecord(String uploadRecordId) {
         return db.query("SELECT * FROM forward_job WHERE upload_record_id = ? ORDER BY created_at, destination_id",

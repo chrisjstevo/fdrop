@@ -9,6 +9,7 @@ import io.fdrop.http.HttpServer;
 import io.fdrop.http.ManagementServer;
 import io.fdrop.sftp.ForwardClient;
 import io.fdrop.sftp.ForwardWorker;
+import io.fdrop.sftp.MinaRemoteFiles;
 import io.fdrop.sftp.MinaSshTools;
 import io.fdrop.sftp.SftpServer;
 import org.slf4j.Logger;
@@ -36,9 +37,11 @@ public final class Main {
         StorageBackend backend = StorageBackend.load(cfg);
         ForwardClient forwardClient = new ForwardClient(Durations.parse(cfg.forward.connectTimeout));
         Fdrop app = new Fdrop(cfg, backend, new MinaSshTools(forwardClient));
+        app.browse.setRemote(new MinaRemoteFiles(forwardClient));
 
         app.janitor.start();
         app.expirySweeper.start();
+        app.browse.start();
         app.encryptionService.start();
         app.search.start();
         app.audit.start();

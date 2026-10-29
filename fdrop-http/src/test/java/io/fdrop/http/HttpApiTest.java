@@ -354,4 +354,84 @@ class HttpApiTest {
         assertThat(patched.get("destinations")).hasSize(3);
         assertThat(send("GET", "/api/v1/folders/" + fid + "/forward-jobs", alice, null)).hasSize(3);
     }
+
+    @Test
+    void destinationTabsListAndRetrieveRemoteFiles() throws Exception {
+        String admin = "admin2fa:root";
+        String alice = "user:alice";
+        send("GET", "/api/v1/me", alice, null);
+        String dest = send("POST", "/api/v1/admin/forward-destinations", admin, "{\"name\":\"Partner\","
+                + "\"host\":\"sftp.test.invalid\",\"port\":22,\"remoteDir\":\"/in\",\"username\":\"fdrop\","
+                + "\"serverAuth\":\"HOST_KEY\",\"hostKeySha256\":\"SHA256:abc\",\"browsable\":true}")
+                .get("destination").get("id").asText();
+        send("PUT", "/api/v1/admin/forward-destinations/" + dest + "/assignments/alice", admin, null);
+        JsonNode folder = send("POST", "/api/v1/folders", alice, "{\"type\":\"forward\",\"name\":\"Out\","
+                + "\"destinationIds\":[\"" + dest + "\"]}");
+        assertThat(folder.get("destinations").get(0).get("browsable").asBoolean()).isTrue();
+        String fid = folder.get("id").asText();
+
+        // a destination holding one file and one folder, without SFTP
+        byte[] report = "hello world".getBytes(StandardCharsets.UTF_8);
+        app.browse.setRemote(new io.fdrop.core.service.RemoteFiles() {
+            @Override
+            public java.util.List<RemoteEntry> list(io.fdrop.core.model.Records.ForwardDestination d, Login login,
+                                                    String root, String dir, int max) {
+                return java.util.List.of(new RemoteEntry("report.csv", false, report.length, 1_700_000_000_000L),
+                        new RemoteEntry("archive", true, 0, 1_700_000_000_000L));
+            }
+
+            @Override
+            public RemoteEntry stat(io.fdrop.core.model.Records.ForwardDestination d, Login login, String root,
+                                    String path) {
+                assertThat(path).isEqualTo("/in/report.csv");
+                return new RemoteEntry("report.csv", false, report.length, 1_700_000_000_000L);
+            }
+
+            @Override
+            public void copy(io.fdrop.core.model.Records.ForwardDestination d, Login login, String root, String path,
+                             OutputStream out) throws java.io.IOException {
+                out.write(report);
+            }
+        });
+
+        String base = "/api/v1/folders/" + fid;
+        JsonNode listing = send("GET", base + "/destinations/" + dest + "/remote?path=", alice, null);
+        assertThat(listing.get("remoteDir").asText()).isEqualTo("/in");
+        assertThat(listing.get("entries").findValuesAsText("name")).containsExactly("archive", "report.csv");
+        JsonNode file = listing.get("entries").get(1);
+        assertThat(file.get("type").asText()).isEqualTo("file");
+        assertThat(file.get("cameFrom").asText()).isEqualTo("NOT_FROM_FDROP");
+        assertThat(file.has("retrieval")).isFalse();
+
+        JsonNode r = send("POST", base + "/destinations/" + dest + "/retrievals", alice, "{\"path\":\"report.csv\"}");
+        String rid = r.get("id").asText();
+        for (int i = 0; i < 100 && !r.get("state").asText().equals("READY"); i++) {
+            Thread.sleep(50);
+            r = send("GET", base + "/retrievals/" + rid, alice, null);
+        }
+        assertThat(r.get("state").asText()).isEqualTo("READY");
+        assertThat(r.get("bytesDone").asLong()).isEqualTo(report.length);
+        assertThat(r.hasNonNull("expiresAt")).isTrue();
+
+        HttpResponse<String> whole = http.send(req(base + "/retrievals/" + rid + "/content", alice).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(whole.statusCode()).isEqualTo(200);
+        assertThat(whole.body()).isEqualTo("hello world");
+        assertThat(whole.headers().firstValue("Content-Disposition").orElseThrow()).contains("report.csv");
+        HttpResponse<String> part = http.send(req(base + "/retrievals/" + rid + "/content", alice)
+                .header("Range", "bytes=0-4").build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(part.statusCode()).isEqualTo(206);
+        assertThat(part.body()).isEqualTo("hello");
+
+        // other users see nothing; with Browsing off, nobody lists it
+        send("GET", "/api/v1/me", "user:carol", null);
+        HttpResponse<String> other = http.send(req(base + "/destinations/" + dest + "/remote", "user:carol").build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(other.statusCode()).isEqualTo(404);
+        send("PATCH", "/api/v1/admin/forward-destinations/" + dest, admin, "{\"browsable\":false}");
+        HttpResponse<String> off = http.send(req(base + "/destinations/" + dest + "/remote", alice).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(off.statusCode()).isEqualTo(403);
+        assertThat(send("GET", base, alice, null).get("destinations").get(0).get("browsable").asBoolean()).isFalse();
+    }
 }

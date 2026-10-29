@@ -149,17 +149,34 @@ public final class FilesApi {
         long size = t.info().size();
         String etag = "\"" + (t.info().etag() == null ? size + "-" + t.info().lastModified() : t.info().etag()) + "\"";
         HttpHeaders h = Response.newHeaders();
-        h.set("ETag", etag);
-        h.set("Accept-Ranges", "bytes");
-        h.set("Cache-Control", "private, no-cache");
-        h.set("Content-Type", "application/octet-stream");
         h.set("Content-Disposition", disposition(t.path().name()));
         if (t.expiresAt() != null) {
             h.set("X-Fdrop-Expires-At", Instant.ofEpochMilli(t.expiresAt()).toString());
         }
-        if (t.info().lastModified() != null) {
+        return serve(ctx, h, size, etag, t.info().lastModified(), (offset, length) -> app.files.openRead(t, offset,
+                length), length -> Audit.log("download", "user", ctx.principal().username(), "ip", ctx.clientIp(),
+                "protocol", "HTTP", "path", t.path().virtual(), "bytes", length));
+    }
+
+    /** Opens {@code length} bytes from {@code offset}; -1 for the rest. */
+    interface RangeOpener {
+        ReadableByteChannel open(long offset, long length) throws IOException;
+    }
+
+    /**
+     * Streams a stored object as a download, honouring {@code If-None-Match} and a single {@code Range}
+     * ({@code If-Range} too). {@code h} carries the caller's own headers, such as {@code Content-Disposition};
+     * {@code audit} is called with the bytes about to be sent.
+     */
+    static Response serve(Ctx ctx, HttpHeaders h, long size, String etag, Instant lastModified, RangeOpener opener,
+                          java.util.function.LongConsumer audit) throws IOException {
+        h.set("ETag", etag);
+        h.set("Accept-Ranges", "bytes");
+        h.set("Cache-Control", "private, no-cache");
+        h.set("Content-Type", "application/octet-stream");
+        if (lastModified != null) {
             h.set("Last-Modified", java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(
-                    t.info().lastModified().atZone(java.time.ZoneOffset.UTC)));
+                    lastModified.atZone(java.time.ZoneOffset.UTC)));
         }
         String inm = ctx.header("If-None-Match");
         if (inm != null && (inm.equals(etag) || inm.equals("*"))) {
@@ -189,10 +206,9 @@ public final class FilesApi {
             }
         }
         long length = size == 0 ? 0 : end - start + 1;
-        ReadableByteChannel ch = app.files.openRead(t, start, status == 206 ? length : -1);
+        ReadableByteChannel ch = opener.open(start, status == 206 ? length : -1);
         FileChannel fc = status == 200 && ch instanceof FileChannel f ? f : null;
-        Audit.log("download", "user", ctx.principal().username(), "ip", ctx.clientIp(), "protocol", "HTTP",
-                "path", t.path().virtual(), "bytes", length);
+        audit.accept(length);
         return new Response.Stream(status, length, ch, fc, start, "http", h);
     }
 

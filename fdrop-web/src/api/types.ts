@@ -145,7 +145,48 @@ export interface FolderView {
 export interface FolderDestination {
   id: string;
   name: string;
+  /** Disabled, or no longer assigned to the folder's owner: shown as Not available. */
   paused: boolean;
+  /** The folder shows a tab listing this destination's remote directory. */
+  browsable: boolean;
+}
+
+/** A copy of a remote file in fdrop, or on its way there. */
+export interface Retrieval {
+  id: string;
+  destinationId: string;
+  path: string;
+  state: "QUEUED" | "RETRIEVING" | "READY" | "FAILED";
+  size: number;
+  bytesDone: number;
+  error?: string;
+  readyAt?: string;
+  expiresAt?: string;
+}
+
+export type CameFrom = "SENT_BY_FDROP" | "CHANGED_SINCE_SENT" | "NOT_FROM_FDROP";
+
+export interface RemoteEntry {
+  name: string;
+  /** Relative to the destination's remote directory. */
+  path: string;
+  type: "file" | "folder";
+  size?: number;
+  modifiedAt?: string;
+  cameFrom?: CameFrom;
+  retrieval?: Retrieval;
+}
+
+/** A destination tab's listing of the remote directory, or a sub-folder of it. */
+export interface RemoteListing {
+  destinationId: string;
+  destinationName: string;
+  remoteDir: string;
+  path: string;
+  listedAt: string;
+  truncated: boolean;
+  maxEntries: number;
+  entries: RemoteEntry[];
 }
 
 export type JobState = "QUEUED" | "SENDING" | "RETRY_WAIT" | "SENT" | "FAILED" | "PAUSED" | "CANCELLED";
@@ -259,6 +300,8 @@ export interface Destination {
   hostCaPublicKey?: string;
   overwrite: boolean;
   enabled: boolean;
+  /** Forward folders show a tab listing its remote directory. */
+  browsable: boolean;
   createdAt: number;
   updatedAt: number;
 }

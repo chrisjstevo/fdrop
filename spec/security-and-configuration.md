@@ -78,6 +78,11 @@ forward:
   perDestinationConcurrency: 2
   retryFor: 24h
   connectTimeout: 30s
+  browse:                # destination tabs in forward folders, on destinations with Browsing on
+    cacheFor: 30s        # how long a remote listing is reused
+    maxEntries: 10000    # entries listed per directory
+    maxConcurrent: 2     # retrievals at once per destination
+    keepFor: 24h         # a retrieved copy is deleted this long after its last download
 storage:
   type: s3            # local | s3
   local: { root: /var/lib/fdrop/data }

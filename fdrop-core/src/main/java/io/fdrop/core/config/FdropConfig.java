@@ -156,6 +156,18 @@ public class FdropConfig {
         public int maxDestinationsPerFolder = 5;
         public String retryFor = "24h";
         public String connectTimeout = "30s";
+        public Browse browse = new Browse();
+    }
+
+    /** Destination tabs in forward folders (see "Browsing destinations" in spec/folders.md). */
+    public static class Browse {
+        /** How long a remote listing is reused. */
+        public String cacheFor = "30s";
+        public int maxEntries = 10_000;
+        /** Retrievals at once per destination, besides sending. */
+        public int maxConcurrent = 2;
+        /** A retrieved copy is deleted this long after its last download. */
+        public String keepFor = "24h";
     }
 
     public static class Storage {

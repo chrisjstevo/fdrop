@@ -24,7 +24,7 @@ public final class DestinationRepo {
                 rs.getString("host"), rs.getInt("port"), rs.getString("remote_dir"), rs.getString("username"),
                 ServerAuth.valueOf(rs.getString("server_auth")), rs.getString("host_key_sha256"),
                 rs.getString("host_ca_pubkey"), rs.getBoolean("overwrite"), rs.getBoolean("enabled"),
-                rs.getString("created_by"), rs.getLong("created_at"), rs.getLong("updated_at"));
+                rs.getBoolean("browsable"), rs.getString("created_by"), rs.getLong("created_at"), rs.getLong("updated_at"));
     }
 
     private static ForwardClientKey key(ResultSet rs) throws SQLException {
@@ -58,19 +58,19 @@ public final class DestinationRepo {
 
     public void insert(ForwardDestination d) {
         db.update("INSERT INTO forward_destination (id, name, description, host, port, remote_dir, username,"
-                        + " server_auth, host_key_sha256, host_ca_pubkey, overwrite, enabled, created_by, created_at,"
-                        + " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", d.id(), d.name(),
-                d.description(), d.host(), d.port(), d.remoteDir(), d.username(), d.serverAuth(),
-                d.hostKeySha256(), d.hostCaPublicKey(), d.overwrite(), d.enabled(), d.createdBy(), d.createdAt(),
-                d.updatedAt());
+                        + " server_auth, host_key_sha256, host_ca_pubkey, overwrite, enabled, browsable, created_by,"
+                        + " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", d.id(),
+                d.name(), d.description(), d.host(), d.port(), d.remoteDir(), d.username(), d.serverAuth(),
+                d.hostKeySha256(), d.hostCaPublicKey(), d.overwrite(), d.enabled(), d.browsable(), d.createdBy(),
+                d.createdAt(), d.updatedAt());
     }
 
     public void update(ForwardDestination d) {
         db.update("UPDATE forward_destination SET name = ?, description = ?, host = ?, port = ?, remote_dir = ?,"
                         + " username = ?, server_auth = ?, host_key_sha256 = ?, host_ca_pubkey = ?, overwrite = ?,"
-                        + " enabled = ?, updated_at = ? WHERE id = ?", d.name(), d.description(), d.host(), d.port(),
-                d.remoteDir(), d.username(), d.serverAuth(), d.hostKeySha256(), d.hostCaPublicKey(), d.overwrite(),
-                d.enabled(), System.currentTimeMillis(), d.id());
+                        + " enabled = ?, browsable = ?, updated_at = ? WHERE id = ?", d.name(), d.description(),
+                d.host(), d.port(), d.remoteDir(), d.username(), d.serverAuth(), d.hostKeySha256(),
+                d.hostCaPublicKey(), d.overwrite(), d.enabled(), d.browsable(), System.currentTimeMillis(), d.id());
     }
 
     public void delete(String id) {

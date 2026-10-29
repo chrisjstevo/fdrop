@@ -9,6 +9,7 @@ import io.fdrop.core.model.Enums.JobState;
 import io.fdrop.core.model.Enums.KeyState;
 import io.fdrop.core.model.Enums.Permission;
 import io.fdrop.core.model.Enums.RecordStatus;
+import io.fdrop.core.model.Enums.RetrievalState;
 import io.fdrop.core.model.Enums.ServerAuth;
 import io.fdrop.core.model.Enums.UploadState;
 import io.fdrop.core.model.Enums.UserKind;
@@ -67,7 +68,20 @@ public final class Records {
     public record ForwardDestination(String id, String name, String description, String host, int port,
                                      String remoteDir, String username, ServerAuth serverAuth,
                                      String hostKeySha256, String hostCaPublicKey, boolean overwrite,
-                                     boolean enabled, String createdBy, long createdAt, long updatedAt) {
+                                     boolean enabled, boolean browsable, String createdBy, long createdAt,
+                                     long updatedAt) {
+    }
+
+    /**
+     * A copy in fdrop of a file on a forward destination, made from a forward folder's destination tab. Its remote
+     * size and modified time say which version it is. {@code ownCopy}: it is the folder's own file, sent there and
+     * not yet deleted, so its storage object belongs to the folder and is never deleted with this row.
+     */
+    public record RemoteRetrieval(String id, String folderId, String destinationId, String remotePath,
+                                  long remoteSize, long remoteMtime, RetrievalState state, long bytesDone,
+                                  String storageKey, boolean ownCopy, String chargedSub, String error,
+                                  String requestedBy, long createdAt, long updatedAt, Long readyAt,
+                                  Long lastDownloadAt, Long expiresAt) {
     }
 
     public record ForwardClientKey(String id, String destinationId, String publicKey, byte[] privateKeyEnc,

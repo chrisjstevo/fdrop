@@ -5,8 +5,11 @@ import io.fdrop.core.Fdrop;
 import io.fdrop.core.error.FdropException;
 import io.fdrop.core.model.Enums.FolderType;
 import io.fdrop.core.model.Enums.Permission;
+import io.fdrop.core.model.Enums.RetrievalState;
 import io.fdrop.core.model.Records.ForwardJob;
+import io.fdrop.core.model.Records.RemoteRetrieval;
 import io.fdrop.core.service.FolderService;
+import io.fdrop.core.service.RemoteBrowseService;
 import io.fdrop.http.Json;
 import io.fdrop.http.Ctx;
 import io.fdrop.http.Response;
@@ -56,6 +59,70 @@ public final class FoldersApi {
                     b.hasNonNull("reason") ? b.get("reason").asText() : null);
             return Response.empty(204);
         });
+        r.get("/api/v1/folders/{id}/destinations/{destId}/remote", ctx -> Response.json(listing(app.browse.list(
+                ctx.principal(), ctx.param("id"), ctx.param("destId"), ctx.query("path"), ctx.queryBool("refresh")))));
+        r.post("/api/v1/folders/{id}/destinations/{destId}/retrievals", ctx -> {
+            RemoteRetrieval rr = app.browse.retrieve(ctx.principal(), ctx.param("id"), ctx.param("destId"),
+                    FilesApi.text(ctx.jsonTree(), "path"));
+            return Response.json(rr.state() == RetrievalState.READY ? 200 : 202, retrieval(rr));
+        });
+        r.get("/api/v1/folders/{id}/retrievals/{retrievalId}", ctx -> Response.json(retrieval(app.browse.retrieval(
+                ctx.principal(), ctx.param("id"), ctx.param("retrievalId")))));
+        r.get("/api/v1/folders/{id}/retrievals/{retrievalId}/content", this::retrievedContent);
+    }
+
+    /** A destination tab's listing of the remote directory. */
+    private static Map<String, Object> listing(RemoteBrowseService.Listing l) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("destinationId", l.destinationId());
+        m.put("destinationName", l.destinationName());
+        m.put("remoteDir", l.remoteDir());
+        m.put("path", l.path());
+        m.put("listedAt", Instant.ofEpochMilli(l.listedAt()).toString());
+        m.put("truncated", l.truncated());
+        m.put("maxEntries", l.maxEntries());
+        List<Map<String, Object>> entries = new ArrayList<>();
+        for (RemoteBrowseService.EntryView e : l.entries()) {
+            Map<String, Object> em = new LinkedHashMap<>();
+            em.put("name", e.name());
+            em.put("path", e.path());
+            em.put("type", e.directory() ? "folder" : "file");
+            em.put("size", e.directory() ? null : e.size());
+            em.put("modifiedAt", e.modifiedAt() == 0 ? null : Instant.ofEpochMilli(e.modifiedAt()).toString());
+            em.put("cameFrom", e.cameFrom() == null ? null : e.cameFrom().name());
+            em.put("retrieval", e.retrieval() == null ? null : retrieval(e.retrieval()));
+            entries.add(em);
+        }
+        m.put("entries", entries);
+        return m;
+    }
+
+    /** A copy of a remote file in fdrop, or on its way. */
+    static Map<String, Object> retrieval(RemoteRetrieval r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.id());
+        m.put("destinationId", r.destinationId());
+        m.put("path", r.remotePath());
+        m.put("state", r.state().name());
+        m.put("size", r.remoteSize());
+        m.put("bytesDone", r.state() == RetrievalState.READY ? r.remoteSize() : r.bytesDone());
+        m.put("error", r.error());
+        m.put("readyAt", r.readyAt() == null ? null : Instant.ofEpochMilli(r.readyAt()).toString());
+        m.put("expiresAt", r.expiresAt() == null ? null : Instant.ofEpochMilli(r.expiresAt()).toString());
+        return m;
+    }
+
+    private Response retrievedContent(Ctx ctx) throws java.io.IOException {
+        RemoteBrowseService.Content c = app.browse.content(ctx.principal(), ctx.param("id"), ctx.param("retrievalId"));
+        long size = c.info().size();
+        String etag = "\"" + c.retrieval().id() + "-" + size + "\"";
+        io.netty.handler.codec.http.HttpHeaders h = Response.newHeaders();
+        h.set("Content-Disposition", FilesApi.disposition(c.name()));
+        return FilesApi.serve(ctx, h, size, etag, c.info().lastModified(),
+                (offset, length) -> app.browse.openRead(c, offset, length),
+                length -> io.fdrop.core.audit.Audit.log("download", "user", ctx.principal().username(), "ip",
+                        ctx.clientIp(), "protocol", "HTTP", "path", "retrieved:/" + c.retrieval().remotePath(),
+                        "destination", c.retrieval().destinationId(), "bytes", length));
     }
 
     /** One job: one file to one destination. Jobs of the same file share {@code uploadRecordId}. */

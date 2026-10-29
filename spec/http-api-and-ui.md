@@ -50,6 +50,10 @@ The HTTP side is a Netty 4.2 server on `http.port` (default 8443), HTTPS only, s
 | GET | `/api/v1/folders/{id}/forward-jobs` | Forward job status for the folder: one job per file and destination, with the destination's name |
 | POST | `/api/v1/folders/{id}/forward-jobs/{jobId}/retry` | Retry a failed job (owner) |
 | POST | `/api/v1/folders/{id}/forward-jobs/{jobId}/cancel` | Give up on a failed job's destination for that file, with a reason (owner) |
+| GET | `/api/v1/folders/{id}/destinations/{destId}/remote?path=` | List a browsable destination's remote directory, or a sub-folder of it: name, size, modified time, folder or file, whether fdrop sent it, and any retrieval of it (owner and members) |
+| POST | `/api/v1/folders/{id}/destinations/{destId}/retrievals` | Retrieve a remote file (`{"path"}`) into fdrop; returns the retrieval, reusing a present copy or one already running: 200 when it is ready, 202 while it is on its way (owner and members) |
+| GET | `/api/v1/folders/{id}/retrievals/{retrievalId}` | A retrieval's state and progress |
+| GET | `/api/v1/folders/{id}/retrievals/{retrievalId}/content` | Download a ready retrieval (supports `Range`) |
 | GET | `/api/v1/forward-destinations` | The caller's assigned, enabled destinations (id, name, description) for the drop-down |
 | GET | `/api/v1/users?search=` | Find standard users and application accounts to add as members (username, display name and `kind` only) |
 | GET/POST | `/api/v1/admin/users` | List or create users (admin) |

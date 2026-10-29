@@ -38,7 +38,11 @@ public final class ForwardService {
     private static final Logger log = LoggerFactory.getLogger(ForwardService.class);
 
     /** One destination of a folder as its members see it. */
-    public record DestinationRef(String id, String name, boolean paused) {
+    /**
+     * One of a forward folder's destinations: {@code paused} when it is disabled or no longer assigned to the owner,
+     * and {@code browsable} when its remote directory can be listed from the folder (see RemoteBrowseService).
+     */
+    public record DestinationRef(String id, String name, boolean paused, boolean browsable) {
     }
 
     private final FdropConfig cfg;
@@ -113,7 +117,8 @@ public final class ForwardService {
         for (String id : folders.destinations(f.id())) {
             Optional<ForwardDestination> d = destinations.find(id);
             boolean paused = d.isEmpty() || !d.get().enabled() || !destinations.isAssigned(id, f.ownerSub());
-            out.add(new DestinationRef(id, d.map(ForwardDestination::name).orElse("(deleted destination)"), paused));
+            out.add(new DestinationRef(id, d.map(ForwardDestination::name).orElse("(deleted destination)"), paused,
+                    d.map(ForwardDestination::browsable).orElse(false)));
         }
         return out;
     }

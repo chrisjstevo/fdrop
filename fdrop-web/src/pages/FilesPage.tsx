@@ -1,12 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { del, downloadUrl, get, post, q } from "../api/client";
-import type { Entry, FolderView, ForwardJob, HistoryPage, JobState, Listing } from "../api/types";
+import type { Entry, FolderView, ForwardJob, HistoryPage, JobState, Listing, RemoteListing } from "../api/types";
 import { DropTarget } from "../components/DropZone";
 import { ExpiresCell, ExpiryPicker, SetExpiryDialog, type ExpiryChoice } from "../components/Expiry";
 import { useProvideFolderActions } from "../components/FolderActions";
-import { FileIcon, FolderIcon, ForwardIcon } from "../components/icons";
+import { FileIcon, FolderIcon, ForwardIcon, ServerIcon } from "../components/icons";
 import {
   Badge,
   Breadcrumbs,
@@ -20,6 +20,7 @@ import {
   RowMenu,
 } from "../components/ui";
 import { formatBytes, formatDate, join, parentOf } from "../util/format";
+import { RemoteTab, remoteKey, remoteUrl } from "./RemoteTab";
 import { FileForwardBadge, groupJobs } from "./status";
 import s from "./pages.module.css";
 
@@ -74,7 +75,7 @@ export function FilesPage() {
   const location = useLocation();
   const raw = decodeURIComponent(location.pathname.replace(/^\/files/, "")) || "/home";
   const path = raw.endsWith("/") && raw.length > 1 ? raw.slice(0, -1) : raw;
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const search = (params.get("q") ?? "").trim().toLowerCase();
   // opened from a search result: that file is marked and scrolled to
   const highlight = params.get("highlight");
@@ -113,6 +114,29 @@ export function FilesPage() {
     enabled: !!folderId,
     queryFn: () => get<FolderView>(`/api/v1/folders/${folderId}`),
   });
+  // a forward folder's destination tabs: the ones an admin lets folders browse
+  const browsable = inForward ? (folder.data?.destinations ?? []).filter((d) => d.browsable) : [];
+  const tabId = params.get("tab");
+  const openTab = browsable.find((d) => d.id === tabId);
+  // each tab's count is its remote directory's size, listed once (the server reuses listings for 30 s)
+  const remoteCounts = useQueries({
+    queries: browsable.map((d) => ({
+      queryKey: remoteKey(folderId ?? "", d.id),
+      enabled: !!folderId && !d.paused,
+      queryFn: () => get<RemoteListing>(remoteUrl(folderId!, d.id)),
+      retry: false,
+      staleTime: 30_000,
+    })),
+  });
+  const selectTab = (id?: string) => {
+    const next = new URLSearchParams(params);
+    if (id) {
+      next.set("tab", id);
+    } else {
+      next.delete("tab");
+    }
+    setParams(next, { replace: true });
+  };
 
   // An expired file leaves the list at its expiry: refetch when the earliest one shown passes.
   const nextExpiry = Math.min(
@@ -305,30 +329,92 @@ export function FilesPage() {
       )}
       {folder.data && folder.data.role === "READ" && <p className="muted">You have read-only access to this folder.</p>}
 
-      {path === "/home" && !search && <Recent />}
-      {!isAreaRoot && entries.length + allEntries.length > 0 && (
-        <h2 className={s.label}>{search ? `Matching “${search}”` : "All files"}</h2>
-      )}
-      {isAreaRoot || !self ? (
-        list
-      ) : (
-        <DropTarget
-          targetPath={path}
-          label={`Drop files anywhere, or choose files, to upload to ${title}`}
-          chooseRef={chooseRef}
-          filesOnly={inForward}
-          expiresIn={expiryAllowed ? expiry.value : undefined}
-          disabled={!writable || (inForward && folder.data?.paused) || (expiryAllowed && !!expiry.error)}
-          disabledReason={
-            inForward && folder.data?.paused
-              ? "Uploads are paused because one of this folder's destinations is disabled or no longer assigned."
-              : expiryAllowed && expiry.error
-                ? "Fix the expiry above to upload."
-                : undefined
-          }
+      {browsable.length > 0 && (
+        <div
+          role="tablist"
+          aria-label="Folder views"
+          className={s.tabs}
+          onKeyDown={(ev) => {
+            // arrow keys move between tabs, as ARIA tabs do
+            const ids = [undefined, ...browsable.map((d) => d.id)];
+            const at = ids.indexOf(openTab?.id);
+            const step = ev.key === "ArrowRight" ? 1 : ev.key === "ArrowLeft" ? -1 : 0;
+            if (step) {
+              ev.preventDefault();
+              const next = ids[(at + step + ids.length) % ids.length];
+              selectTab(next);
+              document.getElementById(`tab-${next ?? "local"}`)?.focus();
+            }
+          }}
         >
-          {list}
-        </DropTarget>
+          <button
+            type="button"
+            role="tab"
+            id="tab-local"
+            aria-selected={!openTab}
+            aria-controls="panel-local"
+            tabIndex={openTab ? -1 : 0}
+            className={s.tab}
+            onClick={() => selectTab(undefined)}
+          >
+            In fdrop <span className={s.count}>{allEntries.length}</span>
+          </button>
+          {browsable.map((d, i) => {
+            const count = remoteCounts[i]?.data?.entries.length;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                role="tab"
+                id={`tab-${d.id}`}
+                aria-selected={openTab?.id === d.id}
+                aria-controls={`panel-${d.id}`}
+                tabIndex={openTab?.id === d.id ? 0 : -1}
+                className={s.tab}
+                onClick={() => selectTab(d.id)}
+              >
+                <ServerIcon size={16} />
+                {d.name}
+                {d.paused ? (
+                  <Badge kind="warn">Not available</Badge>
+                ) : count !== undefined ? (
+                  <span className={s.count}>{count}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {openTab && folderId ? (
+        <RemoteTab key={openTab.id} folderId={folderId} destination={openTab} />
+      ) : (
+        <div {...(browsable.length > 0 ? { role: "tabpanel", id: "panel-local", "aria-labelledby": "tab-local" } : {})}>
+          {path === "/home" && !search && <Recent />}
+          {!isAreaRoot && entries.length + allEntries.length > 0 && (
+            <h2 className={s.label}>{search ? `Matching “${search}”` : "All files"}</h2>
+          )}
+          {isAreaRoot || !self ? (
+            list
+          ) : (
+            <DropTarget
+              targetPath={path}
+              label={`Drop files anywhere, or choose files, to upload to ${title}`}
+              chooseRef={chooseRef}
+              filesOnly={inForward}
+              expiresIn={expiryAllowed ? expiry.value : undefined}
+              disabled={!writable || (inForward && folder.data?.paused) || (expiryAllowed && !!expiry.error)}
+              disabledReason={
+                inForward && folder.data?.paused
+                  ? "Uploads are paused because one of this folder's destinations is disabled or no longer assigned."
+                  : expiryAllowed && expiry.error
+                    ? "Fix the expiry above to upload."
+                    : undefined
+              }
+            >
+              {list}
+            </DropTarget>
+          )}
+        </div>
       )}
 
       <NewFolderDialog open={newFolder} onOpenChange={setNewFolder} parent={path} onDone={refresh} />

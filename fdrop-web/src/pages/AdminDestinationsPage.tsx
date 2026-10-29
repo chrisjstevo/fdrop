@@ -20,6 +20,7 @@ interface Form {
   hostCaPublicKey: string;
   overwrite: boolean;
   enabled: boolean;
+  browsable: boolean;
 }
 
 const EMPTY: Form = {
@@ -34,6 +35,7 @@ const EMPTY: Form = {
   hostCaPublicKey: "",
   overwrite: false,
   enabled: true,
+  browsable: false,
 };
 
 function fromDestination(d: Destination): Form {
@@ -49,6 +51,7 @@ function fromDestination(d: Destination): Form {
     hostCaPublicKey: d.hostCaPublicKey ?? "",
     overwrite: d.overwrite,
     enabled: d.enabled,
+    browsable: d.browsable,
   };
 }
 
@@ -173,6 +176,16 @@ function DestinationFields({ form, setForm }: { form: Form; setForm: (f: Form) =
       <label className={s.checkbox}>
         <input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", e.target.checked)} /> Enabled
       </label>
+      <label className={s.checkbox}>
+        <input type="checkbox" checked={form.browsable} onChange={(e) => set("browsable", e.target.checked)} /> Let
+        forward folders browse this destination and retrieve its files
+      </label>
+      {form.browsable && (
+        <p className="muted">
+          Everyone in a forward folder that sends here will see every file in the remote directory, and can copy them
+          into fdrop. Turn this on only where that is all right.
+        </p>
+      )}
     </>
   );
 }
@@ -388,6 +401,8 @@ export function AdminDestinationPage() {
           </dd>
           <dt>Existing files</dt>
           <dd>{d.overwrite ? "Overwritten" : "Never overwritten (the job fails with a conflict)"}</dd>
+          <dt>Browsing</dt>
+          <dd>{d.browsable ? "Forward folders can list it and retrieve its files" : "Off"}</dd>
           <dt>Updated</dt>
           <dd>{formatDate(d.updatedAt)}</dd>
         </dl>

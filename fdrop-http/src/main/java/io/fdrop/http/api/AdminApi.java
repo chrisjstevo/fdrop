@@ -210,7 +210,8 @@ public final class AdminApi {
                 b.hasNonNull("port") ? b.get("port").asInt() : null, opt(b, "remoteDir"), opt(b, "username"), auth,
                 opt(b, "hostKeySha256"), opt(b, "hostCaPublicKey"),
                 b.hasNonNull("overwrite") ? b.get("overwrite").asBoolean() : null,
-                b.hasNonNull("enabled") ? b.get("enabled").asBoolean() : null);
+                b.hasNonNull("enabled") ? b.get("enabled").asBoolean() : null,
+                b.hasNonNull("browsable") ? b.get("browsable").asBoolean() : null);
     }
 
     /** {@code allowedMethods}: a list of {@code MTLS}, {@code PASSWORD}, {@code PUBLICKEY}; null when absent. */

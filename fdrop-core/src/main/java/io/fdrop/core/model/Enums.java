@@ -25,6 +25,9 @@ public final class Enums {
 
     public enum JobState { QUEUED, SENDING, RETRY_WAIT, SENT, FAILED, PAUSED, CANCELLED }
 
+    /** A remote file being copied into fdrop from a forward destination. */
+    public enum RetrievalState { QUEUED, RETRIEVING, READY, FAILED }
+
     public enum ServerAuth { HOST_KEY, HOST_CA }
 
     public enum KeyState { ACTIVE, PENDING, RETIRED }

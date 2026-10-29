@@ -59,6 +59,13 @@
   color: #fff;
 }
 
+/* A file that is ready: mint, as Sent and Stored badges are, with deep navy text in either theme. */
+.ready {
+  background: var(--color-mint);
+  border-color: var(--color-mint);
+  color: var(--color-navy-deep);
+}
+
 .small {
   padding: 6px 16px;
   min-height: 36px;

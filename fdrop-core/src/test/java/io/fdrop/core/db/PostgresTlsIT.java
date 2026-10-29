@@ -113,7 +113,7 @@ class PostgresTlsIT {
             assertThat(ssl.getFirst()[0]).isEqualTo(true);
             assertThat((String) ssl.getFirst()[1]).isIn("TLSv1.3", "TLSv1.2");
             assertThat((String) ssl.getFirst()[2]).contains("CN=fdrop");
-            assertThat(db.queryLong("SELECT MAX(CAST(version AS INT)) FROM flyway_schema_history")).isEqualTo(7);
+            assertThat(db.queryLong("SELECT MAX(CAST(version AS INT)) FROM flyway_schema_history")).isEqualTo(8);
 
             // the audit chain on PostgreSQL, as production runs it
             FdropConfig.AuditLog a = new FdropConfig.AuditLog();
